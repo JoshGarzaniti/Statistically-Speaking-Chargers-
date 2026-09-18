@@ -15,6 +15,18 @@ library(nflfastR)
 library(nflreadr)
 library(tidyverse)
 library(stringr)
+library(ggplot2)
+library(ggdark)
+library(caret)
+library(xgboost)
+library(randomForest)
+library(ggrepel)
+library(nflplotR)
+library(mice)
+library(lme4)
+library(here)
+library(DT)
+library(htmlwidgets)
 ```
 Load in our play by play data
 ```{r}
@@ -428,6 +440,200 @@ Chargers_Week_1_Summary = league_wk_1_summary %>%
 
 DT::datatable(Chargers_Week_1_Summary)
 ```
+
+
+Comparing Chargers Week 1 Adv Statistics to the League
+
+```{r}
+stats_to_compare = c(
+  "points",
+  "offensive_plays",
+  "yards",
+  "passing_yards",
+  "rushing_yards",
+  "turnover_differential",
+  "offensive_turnovers",
+  "defensive_plays",
+  "defensive_turnovers",
+  "Net_EPA",
+  "Net_EPA_per_play",
+  "EPA_generated",
+  "EPA_passing",
+  "EPA_rushing",
+  "QB_EPA",
+  "EPA_generated_per_play",
+  "EPA_passing_per_play",
+  "EPA_rushing_per_play",
+  "QB_EPA_per_play")
+
+defensive_stats_to_compare = c(
+  "EPA_given_up",
+  "EPA_passing_given",
+  "EPA_rushing_given",
+  "QB_EPA_given",
+  "EPA_given_up_per_play",
+  "EPA_passing_given_per_play",
+  "EPA_rushing_given_per_play",
+  "QB_EPA_given_per_play")
+
+Chargers_vs_League = league_wk_1_summary%>%
+  filter(team == "LAC")%>%
+  mutate(
+    across(
+      all_of(stats_to_compare),
+      ~ .x - mean(league_wk_1_summary[[cur_column()]], na.rm = TRUE),
+      .names = "{.col}_vs_league_avg"),
+    
+    across(
+      all_of(defensive_stats_to_compare),
+      ~ mean(league_wk_1_summary[[cur_column()]], na.rm = TRUE) - .x,
+      .names = "{.col}_vs_league_avg"))
+```
+
+Data Table of Chargers week 1 stats
+```{r}
+DT::datatable(
+  Chargers_vs_League,
+  options = list(
+    scrollX = TRUE,
+    pageLength = 10))
+```
+
+Chargers vs League Stats Heatmap week 1:
+
+Names
+```{r}
+heatmap_stats = c(
+  "points",
+  "yards",
+  "passing_yards",
+  "rushing_yards",
+  "turnover_differential",
+  "Net_EPA",
+  "Net_EPA_per_play",
+  "EPA_passing",
+  "EPA_rushing",
+  "QB_EPA",
+  "EPA_passing_per_play",
+  "EPA_rushing_per_play",
+  "QB_EPA_per_play",
+  "EPA_passing_given",
+  "EPA_rushing_given",
+  "QB_EPA_given",
+  "EPA_passing_given_per_play",
+  "EPA_rushing_given_per_play",
+  "QB_EPA_given_per_play")
+```
+
+Offense
+```{r}
+heatmap_stats = c(
+  "points",
+  "yards",
+  "passing_yards",
+  "rushing_yards",
+  "turnover_differential",
+  "Net_EPA",
+  "Net_EPA_per_play",
+  "EPA_passing",
+  "EPA_rushing",
+  "QB_EPA",
+  "EPA_passing_per_play",
+  "EPA_rushing_per_play",
+  "QB_EPA_per_play",
+  "EPA_passing_given",
+  "EPA_rushing_given",
+  "QB_EPA_given",
+  "EPA_passing_given_per_play",
+  "EPA_rushing_given_per_play",
+  "QB_EPA_given_per_play")
+
+heatmap_data = league_wk_1_summary%>%
+  select(team, all_of(heatmap_stats))%>%
+  pivot_longer(
+    cols = -team,
+    names_to = "stat",
+    values_to = "value")%>%
+  group_by(stat)%>%
+  mutate(
+    league_avg = mean(value, na.rm = TRUE),
+    vs_league_avg = value - league_avg)%>%
+  ungroup()
+```
+
+Defense
+```{r}
+defensive_stats = c(
+  "EPA_passing_given",
+  "EPA_rushing_given",
+  "QB_EPA_given",
+  "EPA_passing_given_per_play",
+  "EPA_rushing_given_per_play",
+  "QB_EPA_given_per_play")
+
+heatmap_data = heatmap_data%>%
+  mutate(
+    performance_vs_avg = case_when(
+      stat %in% defensive_stats ~ -vs_league_avg,
+      TRUE ~ vs_league_avg))
+
+#Z score
+heatmap_data = heatmap_data%>%
+  group_by(stat)%>%
+  mutate(
+    z_score = (performance_vs_avg - mean(performance_vs_avg, na.rm = TRUE)) /
+              sd(performance_vs_avg, na.rm = TRUE))%>%
+  ungroup()
+```
+
+Heatmap
+```{r}
+ggplot(
+  heatmap_data,
+  aes(
+    x = team,
+    y = stat,
+    fill = z_score))+
+  geom_tile(color = "grey20")+
+  
+  scale_fill_gradient2(
+    low = "blue",
+    mid = "white",
+    high = "red",
+    midpoint = 0)+
+  
+  labs(
+    title = "NFL Week 1 Performance vs. League Average",
+    subtitle = "Positive values indicate above-average performance",
+    x = "Team",
+    y = "Statistic",
+    fill = "Vs. League Avg.")+
+  
+  theme_minimal()+
+  theme(
+    plot.background = element_rect(fill = "black", color = NA),
+    panel.background = element_rect(fill = "black", color = NA),
+    panel.grid = element_blank(),
+    
+    text = element_text(color = "white"),
+    axis.text = element_text(color = "white"),
+    axis.text.x = element_text(
+      angle = 45,
+      hjust = 1,
+      color = "white"),
+    axis.title = element_text(color = "white"),
+    
+    plot.title = element_text(
+      color = "white",
+      face = "bold"),
+    plot.subtitle = element_text(color = "grey80"),
+    
+    legend.background = element_rect(fill = "black", color = NA),
+    legend.text = element_text(color = "white"),
+    legend.title = element_text(color = "white"))
+```
+
+
 
 
 
