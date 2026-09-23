@@ -1,0 +1,1279 @@
+---
+title: "Statistically Speaking 2026 Week 2"
+author: "Josh Garzaniti"
+date: "2026-09-21"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Install and load in needed libraries
+```{r}
+library(nflfastR)
+library(nflreadr)
+library(tidyverse)
+library(stringr)
+library(ggplot2)
+library(ggdark)
+library(caret)
+library(xgboost)
+library(randomForest)
+library(ggrepel)
+library(nflplotR)
+library(mice)
+library(lme4)
+library(here)
+library(DT)
+library(htmlwidgets)
+library(gt)
+```
+Load in our play by play data
+```{r}
+pbp = load_pbp(2026)
+```
+
+First I want to separate into 2 dataframes: Chargers and the rest of the league
+
+```{r}
+chargers = pbp%>%
+  filter(home_team == "LAC" | away_team == "LAC")
+
+league = pbp
+
+chargers_offense = chargers%>%
+  filter(posteam == "LAC" & !play_type %in% c("kickoff", "extra_point", "field_goal"))
+
+chargers_defense = chargers%>%
+  filter(defteam == "LAC" & !play_type %in% c("kickoff", "extra_point", "field_goal"))
+
+chargers_st = chargers%>%
+  filter(play_type %in% c("kickoff", "extra_point", "field_goal"))
+```
+
+
+Week 2 vs Las Vegas Raiders
+
+```{r}
+chargers_wk_2 = chargers%>%
+  filter(posteam == "LAC" 
+         & week == 2)
+
+chargers_offense_wk_2 = chargers%>%
+  filter(posteam == "LAC" 
+         & week == 2
+         & !play_type %in% c("kickoff", "extra_point", "field_goal"))
+
+chargers_defense_wk_2 = chargers%>%
+  filter(defteam == "LAC"
+         & week == 2
+         & !play_type %in% c("kickoff", "extra_point", "field_goal"))
+
+chargers_st_wk_2 = chargers%>%
+  filter(play_type %in% c("kickoff", "extra_point", "field_goal")
+         & week == 2)
+```
+
+
+Summary:
+
+```{r}
+total_wk2_points = max(chargers$total_home_score, na.rm = TRUE)
+
+total_wk2_points
+  
+total_wk2_points_allowed = max(chargers$total_away_score, na.rm = TRUE)
+
+total_wk2_points_allowed
+
+total_wk2_yards = sum(chargers_offense_wk_2$yards_gained, na.rm = TRUE)
+
+total_wk2_yards
+
+total_wk2_yards_allowed = sum(chargers_defense_wk_2$yards_gained, na.rm = TRUE)
+
+total_wk2_yards_allowed
+
+total_wk2_turnover_dif = (sum(chargers_defense_wk_2$interception, chargers_defense_wk_2$fumble_forced, na.rm = TRUE) - sum(chargers_offense_wk_2$interception, chargers_offense_wk_2$fumble_lost, na.rm = TRUE))
+
+total_wk2_turnover_dif
+
+total_wk2_EPA_generated = sum(chargers_offense_wk_2$epa, na.rm = TRUE)
+
+total_wk2_EPA_generated
+
+total_wk2_EPA_given_up = sum(chargers_defense$epa, na.rm = TRUE)
+
+total_wk2_EPA_given_up
+
+total_wk2_Net_EPA = total_wk2_EPA_generated - total_wk2_EPA_given_up
+
+total_wk2_Net_EPA
+
+total_wk2_EPA_generated_per_play = total_wk2_EPA_generated/nrow(chargers_offense_wk_2)
+
+total_wk2_EPA_generated_per_play
+
+total_wk2_EPA_given_up_per_play = total_wk2_EPA_given_up/nrow(chargers_defense_wk_2)
+
+total_wk2_EPA_given_up_per_play
+
+total_wk2_Net_EPA_per_play = total_wk2_EPA_generated_per_play - total_wk2_EPA_given_up_per_play
+
+total_wk2_Net_EPA_per_play
+
+```
+
+Chargers 14
+Raiders 26
+Chargers yards: 310
+Raiders yards: 305
+Turnover differential: -1
+EPA generated: -19.12942
+EPA allowed: -5.740576
+Net EPA: -13.38885
+EPA generated per play: -0.2484341
+EPA allowed per play:-0.07863802
+Net EPA per play: -0.1697961
+
+
+## How did the league do?
+
+```{r}
+league_wk_2 = league%>%
+  filter(week == 2)
+```
+
+Generate Stats for each team:
+
+Scoring Week 2
+```{r}
+team_points_wk_2 = league_wk_2%>%
+  group_by(game_id)%>%
+  summarise(
+    home_team = first(home_team),
+    away_team = first(away_team),
+    home_points = max(total_home_score, na.rm = TRUE),
+    away_points = max(total_away_score, na.rm = TRUE),
+    .groups = "drop")
+
+team_points_wk_2 = bind_rows(
+  team_points_wk_2%>%
+    transmute(
+      team = home_team,
+      points = home_points),
+  
+  team_points_wk_2%>%
+    transmute(
+      team = away_team,
+      points = away_points))
+```
+
+Offensive Stats
+```{r}
+offense_wk_2 = league_wk_2%>%
+  filter(
+    !is.na(posteam),
+    !play_type %in% c(
+      "kickoff",
+      "extra_point",
+      "field_goal"))%>%
+  group_by(posteam)%>%
+  summarise(
+    yards = sum(yards_gained, na.rm = TRUE),
+    
+    passing_yards = sum(passing_yards, na.rm = TRUE),
+    
+    rushing_yards = sum(rushing_yards, na.rm = TRUE),
+    
+    offensive_turnovers = sum(
+      interception + fumble_lost,
+      na.rm = TRUE),
+    
+
+    EPA_generated = sum(epa, na.rm = TRUE),
+    
+
+    EPA_passing = sum(
+      epa[play_type == "pass"],
+      na.rm = TRUE),
+    
+ 
+    EPA_rushing = sum(
+      epa[play_type == "run"],
+      na.rm = TRUE),
+    
+ 
+    QB_EPA = sum(qb_epa, na.rm = TRUE),
+    
+ 
+    offensive_plays = n(),
+    
+    pass_plays = sum(play_type == "pass", na.rm = TRUE),
+    
+    rush_plays = sum(play_type == "run", na.rm = TRUE),
+    
+ 
+    EPA_generated_per_play =
+      EPA_generated / offensive_plays,
+    
+    EPA_passing_per_play =
+      EPA_passing / pass_plays,
+    
+    EPA_rushing_per_play =
+      EPA_rushing / rush_plays,
+    
+    QB_EPA_per_play =
+      QB_EPA / pass_plays,
+    
+    .groups = "drop")%>%
+  rename(team = posteam)
+```
+
+Defensive Stats
+```{r}
+defense_wk_2 = league_wk_2%>%
+  filter(
+    !is.na(defteam),
+    !play_type %in% c(
+      "kickoff",
+      "extra_point",
+      "field_goal"))%>%
+  group_by(defteam)%>%
+  summarise(
+    yards_allowed = sum(yards_gained, na.rm = TRUE),
+    
+    passing_yards_allowed = sum(passing_yards, na.rm = TRUE),
+    
+    rushing_yards_allowed = sum(rushing_yards, na.rm = TRUE),
+    
+    defensive_turnovers = sum(
+  interception + fumble_forced,
+  na.rm = TRUE),
+  
+  EPA_given_up= sum(epa, na.rm = TRUE),
+    
+  EPA_passing_given = sum(
+      epa[play_type == "pass"],
+      na.rm = TRUE),
+    
+ 
+    EPA_rushing_given = sum(
+      epa[play_type == "run"],
+      na.rm = TRUE),
+    
+ 
+    QB_EPA_given = sum(qb_epa, na.rm = TRUE),
+    
+ 
+    defensive_plays = n(),
+    
+    pass_plays_faced = sum(play_type == "pass", na.rm = TRUE),
+    
+    rush_plays_faced = sum(play_type == "run", na.rm = TRUE),
+    
+ 
+    EPA_given_up_per_play =
+      EPA_given_up / defensive_plays,
+    
+    EPA_passing_given_per_play =
+      EPA_passing_given / pass_plays_faced,
+    
+    EPA_rushing_given_per_play =
+      EPA_rushing_given / rush_plays_faced,
+    
+    QB_EPA_given_per_play =
+      QB_EPA_given / pass_plays_faced,
+    
+    .groups = "drop")%>%
+  rename(team = defteam)
+```
+
+Joined Data
+```{r}
+league_wk_2_summary = offense_wk_2%>%
+  left_join(
+    defense_wk_2,
+    by = "team")%>%
+  left_join(
+    team_points_wk_2,
+    by = "team")%>%
+  mutate(
+    Net_EPA =
+      EPA_generated - EPA_given_up,
+    
+    Net_EPA_per_play =
+      EPA_generated_per_play -
+      EPA_given_up_per_play,
+    
+    turnover_differential =
+      defensive_turnovers - offensive_turnovers)%>%
+  mutate(
+    points_rank = min_rank(desc(points)),
+    
+    offensive_plays_rank = min_rank(desc(offensive_plays)),
+    
+    defensive_plays_rank = min_rank((defensive_plays)),
+    
+    yards_rank = min_rank(desc(yards)),
+    
+    passing_yards_rank = min_rank(desc(passing_yards)),
+    
+    rushing_yards_rank = min_rank(desc(rushing_yards)),
+    
+    offensive_turnovers_rank = min_rank(offensive_turnovers),
+    
+    EPA_generated_rank = min_rank(desc(EPA_generated)),
+    
+    EPA_passing_rank = min_rank(desc(EPA_passing)),
+    
+    EPA_rushing_rank = min_rank(desc(EPA_rushing)),
+    
+    QB_EPA_rank = min_rank(desc(QB_EPA)),
+    
+    EPA_generated_per_play_rank = min_rank(desc(EPA_generated_per_play)),
+    
+    EPA_passing_per_play_rank = min_rank(desc(EPA_passing_per_play)),
+    
+    EPA_rushing_per_play_rank = min_rank(desc(EPA_rushing_per_play)),
+    
+    QB_EPA_per_play_rank = min_rank(desc(QB_EPA_per_play)),
+    
+    yards_allowed_rank = min_rank(yards_allowed),
+    
+    passing_yards_allowed_rank = min_rank((passing_yards_allowed)),
+    
+    rushing_yards_allowed_rank = min_rank((rushing_yards_allowed)),
+    
+    defensive_turnovers_rank = min_rank(desc(defensive_turnovers)),
+    
+    EPA_given_up_rank = min_rank(EPA_given_up),
+    
+    EPA_passing_given_rank = min_rank(EPA_passing_given),
+    
+    EPA_rushing_given_rank = min_rank(EPA_rushing_given),
+    
+    QB_EPA_given_rank = min_rank(QB_EPA_given),
+    
+    EPA_given_up_per_play_rank = min_rank(EPA_given_up_per_play),
+    
+    EPA_passing_given_per_play_rank = min_rank(EPA_passing_given_per_play),
+     
+    EPA_rushing_given_per_play_rank = min_rank(EPA_rushing_given_per_play),
+    
+    QB_EPA_given_per_play_rank = min_rank(QB_EPA_given_per_play),
+    
+    Net_EPA_rank = min_rank(desc(Net_EPA)),
+    
+    Net_EPA_per_play_rank = min_rank(desc(Net_EPA_per_play)),
+    
+    turnover_differential_rank = min_rank(desc(turnover_differential)))
+
+
+```
+
+
+Cleaning it up
+
+```{r}
+league_wk_2_summary = league_wk_2_summary %>%
+  select(
+    team, 
+    points, 
+    points_rank, 
+    offensive_plays, 
+    offensive_plays_rank, 
+    yards, 
+    yards_rank, 
+    passing_yards, 
+    passing_yards_rank, 
+    rushing_yards, 
+    rushing_yards_rank, 
+    turnover_differential, 
+    turnover_differential_rank, 
+    offensive_turnovers, 
+    offensive_turnovers_rank, 
+    defensive_plays,
+    yards_allowed,
+    yards_allowed_rank,
+    passing_yards_allowed,
+    passing_yards_allowed_rank,
+    rushing_yards_allowed,
+    rushing_yards_allowed_rank,
+    defensive_turnovers, 
+    defensive_turnovers_rank, 
+    Net_EPA, 
+    Net_EPA_rank, 
+    Net_EPA_per_play, 
+    Net_EPA_per_play_rank, 
+    EPA_generated, 
+    EPA_generated_rank, 
+    EPA_passing, 
+    EPA_passing_rank, 
+    EPA_rushing, 
+    EPA_rushing_rank, 
+    QB_EPA, 
+    QB_EPA_rank, 
+    EPA_passing_per_play, 
+    EPA_passing_per_play_rank, 
+    EPA_rushing_per_play, 
+    EPA_rushing_per_play_rank, 
+    QB_EPA_per_play, 
+    QB_EPA_per_play_rank, 
+    EPA_generated_per_play, 
+    EPA_generated_per_play_rank,
+    EPA_given_up, 
+    EPA_given_up_rank,
+    EPA_passing_given,
+    EPA_passing_given_rank,
+    EPA_rushing_given,
+    EPA_rushing_given_rank,
+    QB_EPA_given,
+    QB_EPA_given_rank,
+    EPA_given_up_per_play, 
+    EPA_given_up_per_play_rank,
+    EPA_passing_given_per_play,
+    EPA_passing_given_per_play_rank,
+    EPA_rushing_given_per_play,
+    EPA_rushing_given_per_play_rank,
+    QB_EPA_given_per_play,
+    QB_EPA_given_per_play_rank)
+```
+
+
+Chargers Data Table
+
+```{r}
+Chargers_Week_2_Summary = league_wk_2_summary %>%
+  filter(team == "LAC")
+
+DT::datatable(Chargers_Week_2_Summary)
+```
+
+
+Comparing Chargers Week 2 Adv Statistics to the League
+
+```{r}
+stats_to_compare = c(
+  "points",
+  "offensive_plays",
+  "yards",
+  "passing_yards",
+  "rushing_yards",
+  "turnover_differential",
+  "offensive_turnovers",
+  "defensive_plays",
+  "defensive_turnovers",
+  "Net_EPA",
+  "Net_EPA_per_play",
+  "EPA_generated",
+  "EPA_passing",
+  "EPA_rushing",
+  "QB_EPA",
+  "EPA_generated_per_play",
+  "EPA_passing_per_play",
+  "EPA_rushing_per_play",
+  "QB_EPA_per_play")
+
+defensive_stats_to_compare = c(
+  "EPA_given_up",
+  "EPA_passing_given",
+  "EPA_rushing_given",
+  "QB_EPA_given",
+  "EPA_given_up_per_play",
+  "EPA_passing_given_per_play",
+  "EPA_rushing_given_per_play",
+  "QB_EPA_given_per_play")
+
+Chargers_vs_League = league_wk_2_summary%>%
+  filter(team == "LAC")%>%
+  mutate(
+    across(
+      all_of(stats_to_compare),
+      ~ .x - mean(league_wk_2_summary[[cur_column()]], na.rm = TRUE),
+      .names = "{.col}_vs_league_avg"),
+    
+    across(
+      all_of(defensive_stats_to_compare),
+      ~ mean(league_wk_2_summary[[cur_column()]], na.rm = TRUE) - .x,
+      .names = "{.col}_vs_league_avg"))
+```
+
+Data Table of Chargers week 1 stats
+```{r}
+DT::datatable(
+  Chargers_vs_League,
+  options = list(
+    scrollX = TRUE,
+    pageLength = 10))
+```
+
+Chargers vs League Stats Heatmap week 2:
+
+Names
+```{r}
+heatmap_stats = c(
+  "points",
+  "yards",
+  "passing_yards",
+  "rushing_yards",
+  "turnover_differential",
+  "Net_EPA",
+  "Net_EPA_per_play",
+  "EPA_passing",
+  "EPA_rushing",
+  "QB_EPA",
+  "EPA_passing_per_play",
+  "EPA_rushing_per_play",
+  "QB_EPA_per_play",
+  "EPA_passing_given",
+  "EPA_rushing_given",
+  "QB_EPA_given",
+  "EPA_passing_given_per_play",
+  "EPA_rushing_given_per_play",
+  "QB_EPA_given_per_play")
+```
+
+Offense
+```{r}
+heatmap_stats = c(
+  "points",
+  "yards",
+  "passing_yards",
+  "rushing_yards",
+  "turnover_differential",
+  "Net_EPA",
+  "Net_EPA_per_play",
+  "EPA_passing",
+  "EPA_rushing",
+  "QB_EPA",
+  "EPA_passing_per_play",
+  "EPA_rushing_per_play",
+  "QB_EPA_per_play",
+  "EPA_passing_given",
+  "EPA_rushing_given",
+  "QB_EPA_given",
+  "EPA_passing_given_per_play",
+  "EPA_rushing_given_per_play",
+  "QB_EPA_given_per_play")
+
+heatmap_data = league_wk_2_summary%>%
+  select(team, all_of(heatmap_stats))%>%
+  pivot_longer(
+    cols = -team,
+    names_to = "stat",
+    values_to = "value")%>%
+  group_by(stat)%>%
+  mutate(
+    league_avg = mean(value, na.rm = TRUE),
+    vs_league_avg = value - league_avg)%>%
+  ungroup()
+```
+
+Defense
+```{r}
+defensive_stats = c(
+  "EPA_passing_given",
+  "EPA_rushing_given",
+  "QB_EPA_given",
+  "EPA_passing_given_per_play",
+  "EPA_rushing_given_per_play",
+  "QB_EPA_given_per_play")
+
+heatmap_data = heatmap_data%>%
+  mutate(
+    performance_vs_avg = case_when(
+      stat %in% defensive_stats ~ -vs_league_avg,
+      TRUE ~ vs_league_avg))
+
+#Z score
+heatmap_data = heatmap_data%>%
+  group_by(stat)%>%
+  mutate(
+    z_score = (performance_vs_avg - mean(performance_vs_avg, na.rm = TRUE)) /
+              sd(performance_vs_avg, na.rm = TRUE))%>%
+  ungroup()
+```
+
+Heatmap
+```{r}
+ggplot(
+  heatmap_data,
+  aes(
+    x = team,
+    y = stat,
+    fill = z_score))+
+  geom_tile(color = "grey20")+
+  
+  scale_fill_gradient2(
+    low = "blue",
+    mid = "white",
+    high = "red",
+    midpoint = 0)+
+  
+  labs(
+    title = "NFL Week 2 Performance vs. League Average",
+    subtitle = "Positive values indicate above-average performance",
+    x = "Team",
+    y = "Statistic",
+    fill = "Vs. League Avg.")+
+  
+  theme_minimal()+
+  theme(
+    plot.background = element_rect(fill = "black", color = NA),
+    panel.background = element_rect(fill = "black", color = NA),
+    panel.grid = element_blank(),
+    
+    text = element_text(color = "white"),
+    axis.text = element_text(color = "white"),
+    axis.text.x = element_text(
+      angle = 45,
+      hjust = 1,
+      color = "white"),
+    axis.title = element_text(color = "white"),
+    
+    plot.title = element_text(
+      color = "white",
+      face = "bold"),
+    plot.subtitle = element_text(color = "grey80"),
+    
+    legend.background = element_rect(fill = "black", color = NA),
+    legend.text = element_text(color = "white"),
+    legend.title = element_text(color = "white"))
+```
+
+Comparing week 1 to week 2:
+
+```{r}
+league_wk_1 = league%>%
+  filter(week == 1)
+
+team_points_wk_1 = league_wk_1%>%
+  group_by(game_id)%>%
+  summarise(
+    home_team = first(home_team),
+    away_team = first(away_team),
+    home_points = max(total_home_score, na.rm = TRUE),
+    away_points = max(total_away_score, na.rm = TRUE),
+    .groups = "drop")
+
+team_points_wk_1 = bind_rows(
+  team_points_wk_1 %>%
+    transmute(
+      team = home_team,
+      points = home_points),
+  
+  team_points_wk_1 %>%
+    transmute(
+      team = away_team,
+      points = away_points))
+#Offense
+offense_wk_1 = league_wk_1%>%
+  filter(
+    !is.na(posteam),
+    !play_type %in% c(
+      "kickoff",
+      "extra_point",
+      "field_goal"))%>%
+  group_by(posteam)%>%
+  summarise(
+    yards = sum(yards_gained, na.rm = TRUE),
+    
+    passing_yards = sum(passing_yards, na.rm = TRUE),
+    
+    rushing_yards = sum(rushing_yards, na.rm = TRUE),
+    
+    offensive_turnovers = sum(
+      interception + fumble_lost,
+      na.rm = TRUE),
+    
+
+    EPA_generated = sum(epa, na.rm = TRUE),
+    
+
+    EPA_passing = sum(
+      epa[play_type == "pass"],
+      na.rm = TRUE),
+    
+ 
+    EPA_rushing = sum(
+      epa[play_type == "run"],
+      na.rm = TRUE),
+    
+ 
+    QB_EPA = sum(qb_epa, na.rm = TRUE),
+    
+ 
+    offensive_plays = n(),
+    
+    pass_plays = sum(play_type == "pass", na.rm = TRUE),
+    
+    rush_plays = sum(play_type == "run", na.rm = TRUE),
+    
+ 
+    EPA_generated_per_play =
+      EPA_generated / offensive_plays,
+    
+    EPA_passing_per_play =
+      EPA_passing / pass_plays,
+    
+    EPA_rushing_per_play =
+      EPA_rushing / rush_plays,
+    
+    QB_EPA_per_play =
+      QB_EPA / pass_plays,
+    
+    .groups = "drop")%>%
+  rename(team = posteam)
+
+#Defense
+defense_wk_1 = league_wk_1%>%
+  filter(
+    !is.na(defteam),
+    !play_type %in% c(
+      "kickoff",
+      "extra_point",
+      "field_goal"))%>%
+  group_by(defteam)%>%
+  summarise(
+    yards_allowed = sum(yards_gained, na.rm = TRUE),
+    
+    passing_yards_allowed = sum(passing_yards, na.rm = TRUE),
+    
+    rushing_yards_allowed = sum(rushing_yards, na.rm = TRUE),
+    
+    defensive_turnovers = sum(
+  interception + fumble_forced,
+  na.rm = TRUE),
+  
+  EPA_given_up= sum(epa, na.rm = TRUE),
+    
+  EPA_passing_given = sum(
+      epa[play_type == "pass"],
+      na.rm = TRUE),
+    
+ 
+    EPA_rushing_given = sum(
+      epa[play_type == "run"],
+      na.rm = TRUE),
+    
+ 
+    QB_EPA_given = sum(qb_epa, na.rm = TRUE),
+    
+ 
+    defensive_plays = n(),
+    
+    pass_plays_faced = sum(play_type == "pass", na.rm = TRUE),
+    
+    rush_plays_faced = sum(play_type == "run", na.rm = TRUE),
+    
+ 
+    EPA_given_up_per_play =
+      EPA_given_up / defensive_plays,
+    
+    EPA_passing_given_per_play =
+      EPA_passing_given / pass_plays_faced,
+    
+    EPA_rushing_given_per_play =
+      EPA_rushing_given / rush_plays_faced,
+    
+    QB_EPA_given_per_play =
+      QB_EPA_given / pass_plays_faced,
+    
+    .groups = "drop")%>%
+  rename(team = defteam)
+
+
+```
+
+Joined Data
+```{r}
+league_wk_1_summary = offense_wk_1%>%
+  left_join(
+    defense_wk_1,
+    by = "team")%>%
+  left_join(
+    team_points_wk_1,
+    by = "team")%>%
+  mutate(
+    Net_EPA =
+      EPA_generated - EPA_given_up,
+    
+    Net_EPA_per_play =
+      EPA_generated_per_play -
+      EPA_given_up_per_play,
+    
+    turnover_differential =
+      defensive_turnovers - offensive_turnovers)%>%
+  mutate(
+    points_rank = min_rank(desc(points)),
+    
+    offensive_plays_rank = min_rank(desc(offensive_plays)),
+    
+    defensive_plays_rank = min_rank((defensive_plays)),
+    
+    yards_rank = min_rank(desc(yards)),
+    
+    passing_yards_rank = min_rank(desc(passing_yards)),
+    
+    rushing_yards_rank = min_rank(desc(rushing_yards)),
+    
+    offensive_turnovers_rank = min_rank(offensive_turnovers),
+    
+    EPA_generated_rank = min_rank(desc(EPA_generated)),
+    
+    EPA_passing_rank = min_rank(desc(EPA_passing)),
+    
+    EPA_rushing_rank = min_rank(desc(EPA_rushing)),
+    
+    QB_EPA_rank = min_rank(desc(QB_EPA)),
+    
+    EPA_generated_per_play_rank = min_rank(desc(EPA_generated_per_play)),
+    
+    EPA_passing_per_play_rank = min_rank(desc(EPA_passing_per_play)),
+    
+    EPA_rushing_per_play_rank = min_rank(desc(EPA_rushing_per_play)),
+    
+    QB_EPA_per_play_rank = min_rank(desc(QB_EPA_per_play)),
+    
+    yards_allowed_rank = min_rank(yards_allowed),
+    
+    passing_yards_allowed_rank = min_rank((passing_yards_allowed)),
+    
+    rushing_yards_allowed_rank = min_rank((rushing_yards_allowed)),
+    
+    defensive_turnovers_rank = min_rank(desc(defensive_turnovers)),
+    
+    EPA_given_up_rank = min_rank(EPA_given_up),
+    
+    EPA_passing_given_rank = min_rank(EPA_passing_given),
+    
+    EPA_rushing_given_rank = min_rank(EPA_rushing_given),
+    
+    QB_EPA_given_rank = min_rank(QB_EPA_given),
+    
+    EPA_given_up_per_play_rank = min_rank(EPA_given_up_per_play),
+    
+    EPA_passing_given_per_play_rank = min_rank(EPA_passing_given_per_play),
+     
+    EPA_rushing_given_per_play_rank = min_rank(EPA_rushing_given_per_play),
+    
+    QB_EPA_given_per_play_rank = min_rank(QB_EPA_given_per_play),
+    
+    Net_EPA_rank = min_rank(desc(Net_EPA)),
+    
+    Net_EPA_per_play_rank = min_rank(desc(Net_EPA_per_play)),
+    
+    turnover_differential_rank = min_rank(desc(turnover_differential)))
+
+
+```
+
+
+Cleaning it up
+
+```{r}
+league_wk_1_summary = league_wk_1_summary%>%
+  select(
+    team, 
+    points, 
+    points_rank, 
+    offensive_plays, 
+    offensive_plays_rank, 
+    yards, yards_rank, 
+    passing_yards, 
+    passing_yards_rank, 
+    rushing_yards, 
+    rushing_yards_rank, 
+    turnover_differential, 
+    turnover_differential_rank, 
+    offensive_turnovers, 
+    offensive_turnovers_rank, 
+    defensive_plays,
+    yards_allowed,
+    passing_yards_allowed,
+    rushing_yards_allowed,
+    defensive_turnovers, 
+    defensive_turnovers_rank, 
+    Net_EPA, 
+    Net_EPA_rank, 
+    Net_EPA_per_play, 
+    Net_EPA_per_play_rank, 
+    EPA_generated, 
+    EPA_generated_rank, 
+    EPA_passing, 
+    EPA_passing_rank, 
+    EPA_rushing, 
+    EPA_rushing_rank, 
+    QB_EPA, 
+    QB_EPA_rank, 
+    EPA_passing_per_play, 
+    EPA_passing_per_play_rank, 
+    EPA_rushing_per_play, 
+    EPA_rushing_per_play_rank, 
+    QB_EPA_per_play, 
+    QB_EPA_per_play_rank, 
+    EPA_generated_per_play, 
+    EPA_generated_per_play_rank,
+    EPA_given_up, 
+    EPA_given_up_rank,
+    EPA_passing_given,
+    EPA_passing_given_rank,
+    EPA_rushing_given,
+    EPA_rushing_given_rank,
+    QB_EPA_given,
+    QB_EPA_given_rank,
+    EPA_given_up_per_play, 
+    EPA_given_up_per_play_rank,
+    EPA_passing_given_per_play,
+    EPA_passing_given_per_play_rank,
+    EPA_rushing_given_per_play,
+    EPA_rushing_given_per_play_rank,
+    QB_EPA_given_per_play,
+    QB_EPA_given_per_play_rank
+  )
+```
+
+Joining with Week 2 Summary
+
+```{r}
+offensive_stats = c(
+  "points",
+  "offensive_plays",
+  "yards",
+  "passing_yards",
+  "rushing_yards",
+  "turnover_differential",
+  "defensive_turnovers",
+  "Net_EPA",
+  "Net_EPA_per_play",
+  "EPA_generated",
+  "EPA_passing",
+  "EPA_rushing",
+  "QB_EPA",
+  "EPA_generated_per_play",
+  "EPA_passing_per_play",
+  "EPA_rushing_per_play",
+  "QB_EPA_per_play")
+
+defensive_stats = c(
+  "defensive_plays",
+  "yards_allowed",
+  "passing_yards_allowed",
+  "rushing_yards_allowed",
+  "offensive_turnovers",
+  "EPA_given_up",
+  "EPA_passing_given",
+  "EPA_rushing_given",
+  "QB_EPA_given",
+  "EPA_given_up_per_play",
+  "EPA_passing_given_per_play",
+  "EPA_rushing_given_per_play",
+  "QB_EPA_given_per_play")
+
+
+Chargers_Wk1_vs_Wk2 = league_wk_1_summary%>%
+  filter(team == "LAC")%>%
+  select(
+    team,
+    all_of(c(offensive_stats, defensive_stats)))%>%
+  rename_with(
+    ~ paste0(.x, "_wk1"),
+    -team)%>%
+  left_join(
+    league_wk_2_summary%>%
+      filter(team == "LAC")%>%
+      select(
+        team,
+        all_of(c(offensive_stats, defensive_stats)))%>%
+      rename_with(
+        ~ paste0(.x, "_wk2"),
+        -team),
+    by = "team")%>%
+mutate(
+  # Higher is better
+  points_change_from_week_1 =
+    points_wk2 - points_wk1,
+
+  offensive_plays_change_from_week_1 =
+    offensive_plays_wk2 - offensive_plays_wk1,
+
+  yards_change_from_week_1 =
+    yards_wk2 - yards_wk1,
+
+  passing_yards_change_from_week_1 =
+    passing_yards_wk2 - passing_yards_wk1,
+
+  rushing_yards_change_from_week_1 =
+    rushing_yards_wk2 - rushing_yards_wk1,
+
+  turnover_differential_change_from_week_1 =
+    turnover_differential_wk2 - turnover_differential_wk1,
+
+  defensive_turnovers_change_from_week_1 =
+    defensive_turnovers_wk2 - defensive_turnovers_wk1,
+
+  Net_EPA_change_from_week_1 =
+    Net_EPA_wk2 - Net_EPA_wk1,
+
+  Net_EPA_per_play_change_from_week_1 =
+    Net_EPA_per_play_wk2 - Net_EPA_per_play_wk1,
+
+  EPA_generated_change_from_week_1 =
+    EPA_generated_wk2 - EPA_generated_wk1,
+
+  EPA_passing_change_from_week_1 =
+    EPA_passing_wk2 - EPA_passing_wk1,
+
+  EPA_rushing_change_from_week_1 =
+    EPA_rushing_wk2 - EPA_rushing_wk1,
+
+  QB_EPA_change_from_week_1 =
+    QB_EPA_wk2 - QB_EPA_wk1,
+
+  EPA_generated_per_play_change_from_week_1 =
+    EPA_generated_per_play_wk2 - EPA_generated_per_play_wk1,
+
+  EPA_passing_per_play_change_from_week_1 =
+    EPA_passing_per_play_wk2 - EPA_passing_per_play_wk1,
+
+  EPA_rushing_per_play_change_from_week_1 =
+    EPA_rushing_per_play_wk2 - EPA_rushing_per_play_wk1,
+
+  QB_EPA_per_play_change_from_week_1 =
+    QB_EPA_per_play_wk2 - QB_EPA_per_play_wk1,
+
+
+  # Volume — simply Week 2 minus Week 1
+  defensive_plays_change_from_week_1 =
+    defensive_plays_wk2 - defensive_plays_wk1,
+
+
+  # Lower is better — reverse the subtraction
+  yards_allowed_change_from_week_1 =
+    yards_allowed_wk1 - yards_allowed_wk2,
+
+  passing_yards_allowed_change_from_week_1 =
+    passing_yards_allowed_wk1 - passing_yards_allowed_wk2,
+
+  rushing_yards_allowed_change_from_week_1 =
+    rushing_yards_allowed_wk1 - rushing_yards_allowed_wk2,
+
+  offensive_turnovers_change_from_week_1 =
+    offensive_turnovers_wk1 - offensive_turnovers_wk2,
+
+  EPA_given_up_change_from_week_1 =
+    EPA_given_up_wk1 - EPA_given_up_wk2,
+
+  EPA_passing_given_change_from_week_1 =
+    EPA_passing_given_wk1 - EPA_passing_given_wk2,
+
+  EPA_rushing_given_change_from_week_1 =
+    EPA_rushing_given_wk1 - EPA_rushing_given_wk2,
+
+  QB_EPA_given_change_from_week_1 =
+    QB_EPA_given_wk1 - QB_EPA_given_wk2,
+
+  EPA_given_up_per_play_change_from_week_1 =
+    EPA_given_up_per_play_wk1 - EPA_given_up_per_play_wk2,
+
+  EPA_passing_given_per_play_change_from_week_1 =
+    EPA_passing_given_per_play_wk1 - EPA_passing_given_per_play_wk2,
+
+  EPA_rushing_given_per_play_change_from_week_1 =
+    EPA_rushing_given_per_play_wk1 - EPA_rushing_given_per_play_wk2,
+
+  QB_EPA_given_per_play_change_from_week_1 =
+    QB_EPA_given_per_play_wk1 - QB_EPA_given_per_play_wk2)
+```
+
+
+#Week 1 vs Week 2 Data Table:
+```{r}
+DT::datatable(
+  Chargers_Wk1_vs_Wk2,
+  options = list(
+    scrollX = TRUE,
+    pageLength = 10))
+```
+
+Week 2/Week 1 Difference HeatMap Data
+
+```{r}
+Chargers_Wk1_Wk2_table = tibble(
+  
+  Stat = c(
+    # Offense
+    "Points",
+    "Yards",
+    "Passing Yards",
+    "Rushing Yards",
+    "Turnover Differential",
+    "Defensive Turnovers",
+    "Net EPA",
+    "Net EPA / Play",
+    "EPA Generated",
+    "EPA Passing",
+    "EPA Rushing",
+    "QB EPA",
+    "EPA Generated / Play",
+    "EPA Passing / Play",
+    "EPA Rushing / Play",
+    "QB EPA / Play",
+    
+    # Defense
+    "Yards Allowed",
+    "Passing Yards Allowed",
+    "Rushing Yards Allowed",
+    "Offensive Turnovers",
+    "EPA Given Up",
+    "EPA Passing Given",
+    "EPA Rushing Given",
+    "QB EPA Given",
+    "EPA Given Up / Play",
+    "EPA Passing Given / Play",
+    "EPA Rushing Given / Play",
+    "QB EPA Given / Play"),
+  
+  Week_1 = c(
+    Chargers_Wk1_vs_Wk2$points_wk1,
+    Chargers_Wk1_vs_Wk2$yards_wk1,
+    Chargers_Wk1_vs_Wk2$passing_yards_wk1,
+    Chargers_Wk1_vs_Wk2$rushing_yards_wk1,
+    Chargers_Wk1_vs_Wk2$turnover_differential_wk1,
+    Chargers_Wk1_vs_Wk2$defensive_turnovers_wk1,
+    Chargers_Wk1_vs_Wk2$Net_EPA_wk1,
+    Chargers_Wk1_vs_Wk2$Net_EPA_per_play_wk1,
+    Chargers_Wk1_vs_Wk2$EPA_generated_wk1,
+    Chargers_Wk1_vs_Wk2$EPA_passing_wk1,
+    Chargers_Wk1_vs_Wk2$EPA_rushing_wk1,
+    Chargers_Wk1_vs_Wk2$QB_EPA_wk1,
+    Chargers_Wk1_vs_Wk2$EPA_generated_per_play_wk1,
+    Chargers_Wk1_vs_Wk2$EPA_passing_per_play_wk1,
+    Chargers_Wk1_vs_Wk2$EPA_rushing_per_play_wk1,
+    Chargers_Wk1_vs_Wk2$QB_EPA_per_play_wk1,
+    
+    Chargers_Wk1_vs_Wk2$yards_allowed_wk1,
+    Chargers_Wk1_vs_Wk2$passing_yards_allowed_wk1,
+    Chargers_Wk1_vs_Wk2$rushing_yards_allowed_wk1,
+    Chargers_Wk1_vs_Wk2$offensive_turnovers_wk1,
+    Chargers_Wk1_vs_Wk2$EPA_given_up_wk1,
+    Chargers_Wk1_vs_Wk2$EPA_passing_given_wk1,
+    Chargers_Wk1_vs_Wk2$EPA_rushing_given_wk1,
+    Chargers_Wk1_vs_Wk2$QB_EPA_given_wk1,
+    Chargers_Wk1_vs_Wk2$EPA_given_up_per_play_wk1,
+    Chargers_Wk1_vs_Wk2$EPA_passing_given_per_play_wk1,
+    Chargers_Wk1_vs_Wk2$EPA_rushing_given_per_play_wk1,
+    Chargers_Wk1_vs_Wk2$QB_EPA_given_per_play_wk1),
+  
+  Week_2 = c(
+    Chargers_Wk1_vs_Wk2$points_wk2,
+    Chargers_Wk1_vs_Wk2$yards_wk2,
+    Chargers_Wk1_vs_Wk2$passing_yards_wk2,
+    Chargers_Wk1_vs_Wk2$rushing_yards_wk2,
+    Chargers_Wk1_vs_Wk2$turnover_differential_wk2,
+    Chargers_Wk1_vs_Wk2$defensive_turnovers_wk2,
+    Chargers_Wk1_vs_Wk2$Net_EPA_wk2,
+    Chargers_Wk1_vs_Wk2$Net_EPA_per_play_wk2,
+    Chargers_Wk1_vs_Wk2$EPA_generated_wk2,
+    Chargers_Wk1_vs_Wk2$EPA_passing_wk2,
+    Chargers_Wk1_vs_Wk2$EPA_rushing_wk2,
+    Chargers_Wk1_vs_Wk2$QB_EPA_wk2,
+    Chargers_Wk1_vs_Wk2$EPA_generated_per_play_wk2,
+    Chargers_Wk1_vs_Wk2$EPA_passing_per_play_wk2,
+    Chargers_Wk1_vs_Wk2$EPA_rushing_per_play_wk2,
+    Chargers_Wk1_vs_Wk2$QB_EPA_per_play_wk2,
+    
+    Chargers_Wk1_vs_Wk2$yards_allowed_wk2,
+    Chargers_Wk1_vs_Wk2$passing_yards_allowed_wk2,
+    Chargers_Wk1_vs_Wk2$rushing_yards_allowed_wk2,
+    Chargers_Wk1_vs_Wk2$offensive_turnovers_wk2,
+    Chargers_Wk1_vs_Wk2$EPA_given_up_wk2,
+    Chargers_Wk1_vs_Wk2$EPA_passing_given_wk2,
+    Chargers_Wk1_vs_Wk2$EPA_rushing_given_wk2,
+    Chargers_Wk1_vs_Wk2$QB_EPA_given_wk2,
+    Chargers_Wk1_vs_Wk2$EPA_given_up_per_play_wk2,
+    Chargers_Wk1_vs_Wk2$EPA_passing_given_per_play_wk2,
+    Chargers_Wk1_vs_Wk2$EPA_rushing_given_per_play_wk2,
+    Chargers_Wk1_vs_Wk2$QB_EPA_given_per_play_wk2),
+  
+  Difference = c(
+    Chargers_Wk1_vs_Wk2$points_change_from_week_1,
+    Chargers_Wk1_vs_Wk2$yards_change_from_week_1,
+    Chargers_Wk1_vs_Wk2$passing_yards_change_from_week_1,
+    Chargers_Wk1_vs_Wk2$rushing_yards_change_from_week_1,
+    Chargers_Wk1_vs_Wk2$turnover_differential_change_from_week_1,
+    Chargers_Wk1_vs_Wk2$defensive_turnovers_change_from_week_1,
+    Chargers_Wk1_vs_Wk2$Net_EPA_change_from_week_1,
+    Chargers_Wk1_vs_Wk2$Net_EPA_per_play_change_from_week_1,
+    Chargers_Wk1_vs_Wk2$EPA_generated_change_from_week_1,
+    Chargers_Wk1_vs_Wk2$EPA_passing_change_from_week_1,
+    Chargers_Wk1_vs_Wk2$EPA_rushing_change_from_week_1,
+    Chargers_Wk1_vs_Wk2$QB_EPA_change_from_week_1,
+    Chargers_Wk1_vs_Wk2$EPA_generated_per_play_change_from_week_1,
+    Chargers_Wk1_vs_Wk2$EPA_passing_per_play_change_from_week_1,
+    Chargers_Wk1_vs_Wk2$EPA_rushing_per_play_change_from_week_1,
+    Chargers_Wk1_vs_Wk2$QB_EPA_per_play_change_from_week_1,
+    
+    Chargers_Wk1_vs_Wk2$yards_allowed_change_from_week_1,
+    Chargers_Wk1_vs_Wk2$passing_yards_allowed_change_from_week_1,
+    Chargers_Wk1_vs_Wk2$rushing_yards_allowed_change_from_week_1,
+    Chargers_Wk1_vs_Wk2$offensive_turnovers_change_from_week_1,
+    Chargers_Wk1_vs_Wk2$EPA_given_up_change_from_week_1,
+    Chargers_Wk1_vs_Wk2$EPA_passing_given_change_from_week_1,
+    Chargers_Wk1_vs_Wk2$EPA_rushing_given_change_from_week_1,
+    Chargers_Wk1_vs_Wk2$QB_EPA_given_change_from_week_1,
+    Chargers_Wk1_vs_Wk2$EPA_given_up_per_play_change_from_week_1,
+    Chargers_Wk1_vs_Wk2$EPA_passing_given_per_play_change_from_week_1,
+    Chargers_Wk1_vs_Wk2$EPA_rushing_given_per_play_change_from_week_1,
+    Chargers_Wk1_vs_Wk2$QB_EPA_given_per_play_change_from_week_1)) %>%
+  mutate(
+    Direction = case_when(
+      Difference > 0 ~ "↑",
+      Difference < 0 ~ "↓",
+      TRUE ~ "→"))
+```
+
+Heatmap
+```{r}
+Chargers_Wk1_Wk2_table%>%
+  gt()%>%
+  tab_header(
+    title = "Chargers: Week 1 vs. Week 2",
+    subtitle = "Positive differences indicate improved performance")%>%
+  cols_label(
+    Stat = "Statistic",
+    Week_1 = "Week 1",
+    Week_2 = "Week 2",
+    Difference = "Difference",
+    Direction = "Direction")%>%
+  fmt_number(
+    columns = c(Week_1, Week_2, Difference),
+    decimals = 2)%>%
+  cols_align(
+    align = "center",
+    columns = c(Week_1, Week_2, Difference, Direction))%>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_column_labels(everything()))%>%
+  tab_style(
+    style = cell_text(size = px(20), weight = "bold"),
+    locations = cells_body(columns = Direction))%>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_body(columns = Stat))%>%
+  opt_row_striping()%>%
+  opt_table_font(
+    font = list(
+      google_font("Roboto"),
+      default_fonts()))%>%
+  tab_options(
+    table.font.size = px(14),
+    heading.title.font.size = px(22),
+    heading.subtitle.font.size = px(14))
+```
+
+
+
+
