@@ -227,6 +227,14 @@ offense_wk_2 = league_wk_2%>%
     QB_EPA_per_play =
       QB_EPA / pass_plays,
     
+    off_success_rate = sum(success, na.rm = TRUE) / offensive_plays,
+    
+    off_rush_success_rate = sum(success[play_type == "run"], na.rm = TRUE) / rush_plays,
+    
+    off_pass_success_rate = sum(success[play_type == "pass"], na.rm = TRUE) / pass_plays,
+    
+    off_average_air_yards_depth = mean(air_yards, na.rm = TRUE),
+    
     .groups = "drop")%>%
   rename(team = posteam)
 ```
@@ -285,6 +293,14 @@ defense_wk_2 = league_wk_2%>%
     
     QB_EPA_given_per_play =
       QB_EPA_given / pass_plays_faced,
+  
+    def_success_rate = 1 - (sum(success, na.rm = TRUE) / defensive_plays),
+    
+    def_rush_success_rate = 1- (sum(success[play_type == "run"], na.rm = TRUE) / rush_plays_faced),
+    
+    def_pass_success_rate = 1- (sum(success[play_type == "pass"], na.rm = TRUE) / pass_plays_faced),
+    
+    def_average_air_yards_depth = mean(air_yards, na.rm = TRUE),
     
     .groups = "drop")%>%
   rename(team = defteam)
@@ -340,6 +356,14 @@ league_wk_2_summary = offense_wk_2%>%
     
     QB_EPA_per_play_rank = min_rank(desc(QB_EPA_per_play)),
     
+    off_success_rate_rank = min_rank(desc(off_success_rate)),
+    
+    off_rush_success_rate_rank = min_rank(desc(off_rush_success_rate)),
+    
+    off_pass_success_rate_rank = min_rank(desc(off_pass_success_rate)),
+    
+    off_average_air_yards_depth_rank = min_rank(desc(off_average_air_yards_depth)),
+    
     yards_allowed_rank = min_rank(yards_allowed),
     
     passing_yards_allowed_rank = min_rank((passing_yards_allowed)),
@@ -363,6 +387,14 @@ league_wk_2_summary = offense_wk_2%>%
     EPA_rushing_given_per_play_rank = min_rank(EPA_rushing_given_per_play),
     
     QB_EPA_given_per_play_rank = min_rank(QB_EPA_given_per_play),
+    
+    def_success_rate_rank = min_rank(desc(def_success_rate)),
+    
+    def_rush_success_rate_rank = min_rank(desc(def_rush_success_rate)),
+    
+    def_pass_success_rate_rank = min_rank(desc(def_pass_success_rate)),
+    
+    def_average_air_yards_depth_rank = min_rank((def_average_air_yards_depth)),
     
     Net_EPA_rank = min_rank(desc(Net_EPA)),
     
@@ -423,6 +455,14 @@ league_wk_2_summary = league_wk_2_summary %>%
     QB_EPA_per_play_rank, 
     EPA_generated_per_play, 
     EPA_generated_per_play_rank,
+    off_success_rate,
+    off_success_rate_rank,
+    off_rush_success_rate,
+    off_rush_success_rate_rank,
+    off_pass_success_rate,
+    off_pass_success_rate_rank,
+    off_average_air_yards_depth,
+    off_average_air_yards_depth_rank,
     EPA_given_up, 
     EPA_given_up_rank,
     EPA_passing_given,
@@ -438,7 +478,15 @@ league_wk_2_summary = league_wk_2_summary %>%
     EPA_rushing_given_per_play,
     EPA_rushing_given_per_play_rank,
     QB_EPA_given_per_play,
-    QB_EPA_given_per_play_rank)
+    QB_EPA_given_per_play_rank,
+    def_success_rate,
+    def_success_rate_rank,
+    def_rush_success_rate,
+    def_rush_success_rate_rank,
+    def_pass_success_rate,
+    def_pass_success_rate_rank,
+    def_average_air_yards_depth,
+    def_average_air_yards_depth_rank)
 ```
 
 
@@ -474,7 +522,11 @@ stats_to_compare = c(
   "EPA_generated_per_play",
   "EPA_passing_per_play",
   "EPA_rushing_per_play",
-  "QB_EPA_per_play")
+  "QB_EPA_per_play",
+  "off_success_rate",
+  "off_rush_success_rate",
+  "off_pass_success_rate",
+  "off_average_air_yards_depth")
 
 defensive_stats_to_compare = c(
   "EPA_given_up",
@@ -484,7 +536,11 @@ defensive_stats_to_compare = c(
   "EPA_given_up_per_play",
   "EPA_passing_given_per_play",
   "EPA_rushing_given_per_play",
-  "QB_EPA_given_per_play")
+  "QB_EPA_given_per_play",
+  "def_success_rate",
+  "def_rush_success_rate",
+  "def_pass_success_rate",
+  "def_average_air_yards_depth")
 
 Chargers_vs_League = league_wk_2_summary%>%
   filter(team == "LAC")%>%
@@ -509,35 +565,11 @@ DT::datatable(
     pageLength = 10))
 ```
 
-Chargers vs League Stats Heatmap week 2:
-
-Names
-```{r}
-heatmap_stats = c(
-  "points",
-  "yards",
-  "passing_yards",
-  "rushing_yards",
-  "turnover_differential",
-  "Net_EPA",
-  "Net_EPA_per_play",
-  "EPA_passing",
-  "EPA_rushing",
-  "QB_EPA",
-  "EPA_passing_per_play",
-  "EPA_rushing_per_play",
-  "QB_EPA_per_play",
-  "EPA_passing_given",
-  "EPA_rushing_given",
-  "QB_EPA_given",
-  "EPA_passing_given_per_play",
-  "EPA_rushing_given_per_play",
-  "QB_EPA_given_per_play")
-```
+Chargers vs League Stats Heatmap week 1:
 
 Offense
 ```{r}
-heatmap_stats = c(
+offense_stats = c(
   "points",
   "yards",
   "passing_yards",
@@ -551,15 +583,13 @@ heatmap_stats = c(
   "EPA_passing_per_play",
   "EPA_rushing_per_play",
   "QB_EPA_per_play",
-  "EPA_passing_given",
-  "EPA_rushing_given",
-  "QB_EPA_given",
-  "EPA_passing_given_per_play",
-  "EPA_rushing_given_per_play",
-  "QB_EPA_given_per_play")
+  "off_success_rate",
+  "off_rush_success_rate",
+  "off_pass_success_rate",
+  "off_average_air_yards_depth")
 
 heatmap_data = league_wk_2_summary%>%
-  select(team, all_of(heatmap_stats))%>%
+  select(team, all_of(offense_stats))%>%
   pivot_longer(
     cols = -team,
     names_to = "stat",
@@ -579,31 +609,61 @@ defensive_stats = c(
   "QB_EPA_given",
   "EPA_passing_given_per_play",
   "EPA_rushing_given_per_play",
-  "QB_EPA_given_per_play")
+  "QB_EPA_given_per_play",
+  "def_success_rate",
+  "def_rush_success_rate",
+  "def_pass_success_rate",
+  "def_average_air_yards_depth")
 
-heatmap_data = heatmap_data%>%
-  mutate(
-    performance_vs_avg = case_when(
-      stat %in% defensive_stats ~ -vs_league_avg,
-      TRUE ~ vs_league_avg))
+defensive_lower_is_better = c(
+  "EPA_passing_given",
+  "EPA_rushing_given",
+  "QB_EPA_given",
+  "EPA_passing_given_per_play",
+  "EPA_rushing_given_per_play",
+  "QB_EPA_given_per_play",
+  "def_average_air_yards_depth")
 
-#Z score
-heatmap_data = heatmap_data%>%
+heatmap_stats = c(
+  offense_stats,
+  defensive_stats)
+
+heatmap_data = league_wk_2_summary%>%
+  select(team, all_of(heatmap_stats))%>%
+  pivot_longer(
+    cols = -team,
+    names_to = "stat",
+    values_to = "value")%>%
   group_by(stat)%>%
   mutate(
-    z_score = (performance_vs_avg - mean(performance_vs_avg, na.rm = TRUE)) /
-              sd(performance_vs_avg, na.rm = TRUE))%>%
+    league_avg = mean(value, na.rm = TRUE),
+    vs_league_avg = value - league_avg)%>%
+  ungroup()%>%
+  mutate(
+    performance_vs_avg = case_when(
+  stat %in% defensive_lower_is_better ~ -vs_league_avg,
+  TRUE ~ vs_league_avg))%>%
+  group_by(stat)%>%
+  mutate(
+    z_score = (
+      performance_vs_avg -
+        mean(performance_vs_avg, na.rm = TRUE)) /
+      sd(performance_vs_avg, na.rm = TRUE))%>%
   ungroup()
 ```
 
-Heatmap
+Offensive Heatmap
 ```{r}
+offense_heatmap_data = heatmap_data%>%
+  filter(stat %in% offense_stats)
+
 ggplot(
-  heatmap_data,
+  offense_heatmap_data,
   aes(
     x = team,
     y = stat,
     fill = z_score))+
+  
   geom_tile(color = "grey20")+
   
   scale_fill_gradient2(
@@ -613,7 +673,7 @@ ggplot(
     midpoint = 0)+
   
   labs(
-    title = "NFL Week 2 Performance vs. League Average",
+    title = "NFL Week 2 Offensive Performance vs. League Average",
     subtitle = "Positive values indicate above-average performance",
     x = "Team",
     y = "Statistic",
@@ -642,6 +702,62 @@ ggplot(
     legend.text = element_text(color = "white"),
     legend.title = element_text(color = "white"))
 ```
+
+Defensive heatmap
+
+```{r}
+defense_heatmap_data = heatmap_data%>%
+  filter(stat %in% defensive_stats)
+
+ggplot(
+  defense_heatmap_data,
+  aes(
+    x = team,
+    y = stat,
+    fill = z_score))+
+  
+  geom_tile(color = "grey20")+
+  
+  scale_fill_gradient2(
+    low = "blue",
+    mid = "white",
+    high = "red",
+    midpoint = 0)+
+  
+  labs(
+    title = "NFL Week 2 Defensive Performance vs. League Average",
+    subtitle = "Positive values indicate above-average performance",
+    x = "Team",
+    y = "Statistic",
+    fill = "Vs. League Avg.")+
+  
+  theme_minimal()+
+  theme(
+    plot.background = element_rect(fill = "black", color = NA),
+    panel.background = element_rect(fill = "black", color = NA),
+    panel.grid = element_blank(),
+    
+    text = element_text(color = "white"),
+    axis.text = element_text(color = "white"),
+    axis.text.x = element_text(
+      angle = 45,
+      hjust = 1,
+      color = "white"),
+    axis.title = element_text(color = "white"),
+    
+    plot.title = element_text(
+      color = "white",
+      face = "bold"),
+    plot.subtitle = element_text(color = "grey80"),
+    
+    legend.background = element_rect(fill = "black", color = NA),
+    legend.text = element_text(color = "white"),
+    legend.title = element_text(color = "white"))
+```
+
+
+
+
 
 Comparing week 1 to week 2:
 
@@ -724,6 +840,14 @@ offense_wk_1 = league_wk_1%>%
     QB_EPA_per_play =
       QB_EPA / pass_plays,
     
+    off_success_rate = sum(success, na.rm = TRUE) / offensive_plays,
+    
+    off_rush_success_rate = sum(success[play_type == "run"], na.rm = TRUE) / rush_plays,
+    
+    off_pass_success_rate = sum(success[play_type == "pass"], na.rm = TRUE) / pass_plays,
+    
+    off_average_air_yards_depth = mean(air_yards, na.rm = TRUE),
+    
     .groups = "drop")%>%
   rename(team = posteam)
 
@@ -780,6 +904,14 @@ defense_wk_1 = league_wk_1%>%
     
     QB_EPA_given_per_play =
       QB_EPA_given / pass_plays_faced,
+  
+    def_success_rate = 1 - (sum(success, na.rm = TRUE) / defensive_plays),
+    
+    def_rush_success_rate = 1- (sum(success[play_type == "run"], na.rm = TRUE) / rush_plays_faced),
+    
+    def_pass_success_rate = 1- (sum(success[play_type == "pass"], na.rm = TRUE) / pass_plays_faced),
+    
+    def_average_air_yards_depth = mean(air_yards, na.rm = TRUE),
     
     .groups = "drop")%>%
   rename(team = defteam)
@@ -837,6 +969,14 @@ league_wk_1_summary = offense_wk_1%>%
     
     QB_EPA_per_play_rank = min_rank(desc(QB_EPA_per_play)),
     
+    off_success_rate_rank = min_rank(desc(off_success_rate)),
+    
+    off_rush_success_rate_rank = min_rank(desc(off_rush_success_rate)),
+    
+    off_pass_success_rate_rank = min_rank(desc(off_pass_success_rate)),
+    
+    off_average_air_yards_depth_rank = min_rank(desc(off_average_air_yards_depth)),
+    
     yards_allowed_rank = min_rank(yards_allowed),
     
     passing_yards_allowed_rank = min_rank((passing_yards_allowed)),
@@ -860,6 +1000,14 @@ league_wk_1_summary = offense_wk_1%>%
     EPA_rushing_given_per_play_rank = min_rank(EPA_rushing_given_per_play),
     
     QB_EPA_given_per_play_rank = min_rank(QB_EPA_given_per_play),
+    
+    def_success_rate_rank = min_rank(desc(def_success_rate)),
+    
+    def_rush_success_rate_rank = min_rank(desc(def_rush_success_rate)),
+    
+    def_pass_success_rate_rank = min_rank(desc(def_pass_success_rate)),
+    
+    def_average_air_yards_depth_rank = min_rank((def_average_air_yards_depth)),
     
     Net_EPA_rank = min_rank(desc(Net_EPA)),
     
@@ -899,7 +1047,7 @@ league_wk_1_summary = league_wk_1_summary%>%
     Net_EPA, 
     Net_EPA_rank, 
     Net_EPA_per_play, 
-    Net_EPA_per_play_rank, 
+    Net_EPA_per_play_rank,
     EPA_generated, 
     EPA_generated_rank, 
     EPA_passing, 
@@ -916,6 +1064,14 @@ league_wk_1_summary = league_wk_1_summary%>%
     QB_EPA_per_play_rank, 
     EPA_generated_per_play, 
     EPA_generated_per_play_rank,
+    off_success_rate,
+    off_success_rate_rank,
+    off_rush_success_rate,
+    off_rush_success_rate_rank,
+    off_pass_success_rate,
+    off_pass_success_rate_rank,
+    off_average_air_yards_depth,
+    off_average_air_yards_depth_rank,
     EPA_given_up, 
     EPA_given_up_rank,
     EPA_passing_given,
@@ -931,8 +1087,15 @@ league_wk_1_summary = league_wk_1_summary%>%
     EPA_rushing_given_per_play,
     EPA_rushing_given_per_play_rank,
     QB_EPA_given_per_play,
-    QB_EPA_given_per_play_rank
-  )
+    QB_EPA_given_per_play_rank,
+    def_success_rate,
+    def_success_rate_rank,
+    def_rush_success_rate,
+    def_rush_success_rate_rank,
+    def_pass_success_rate,
+    def_pass_success_rate_rank,
+    def_average_air_yards_depth,
+    def_average_air_yards_depth_rank)
 ```
 
 Joining with Week 2 Summary
@@ -955,7 +1118,11 @@ offensive_stats = c(
   "EPA_generated_per_play",
   "EPA_passing_per_play",
   "EPA_rushing_per_play",
-  "QB_EPA_per_play")
+  "QB_EPA_per_play",
+  "off_success_rate",
+  "off_rush_success_rate",
+  "off_pass_success_rate",
+  "off_average_air_yards_depth")
 
 defensive_stats = c(
   "defensive_plays",
@@ -970,7 +1137,11 @@ defensive_stats = c(
   "EPA_given_up_per_play",
   "EPA_passing_given_per_play",
   "EPA_rushing_given_per_play",
-  "QB_EPA_given_per_play")
+  "QB_EPA_given_per_play",
+  "def_success_rate",
+  "def_rush_success_rate",
+  "def_pass_success_rate",
+  "def_average_air_yards_depth")
 
 
 Chargers_Wk1_vs_Wk2 = league_wk_1_summary%>%
@@ -1043,12 +1214,33 @@ mutate(
 
   QB_EPA_per_play_change_from_week_1 =
     QB_EPA_per_play_wk2 - QB_EPA_per_play_wk1,
-
+  
+  off_success_rate_change_from_week_1 =
+    off_success_rate_wk2 - off_success_rate_wk1,
+  
+  off_rush_success_rate_change_from_week_1 =
+    off_rush_success_rate_wk2 - off_rush_success_rate_wk1,
+  
+  off_pass_success_rate_change_from_week_1 =
+    off_pass_success_rate_wk2 - off_pass_success_rate_wk1,
+  
+  def_success_rate_change_from_week_1 =
+    def_success_rate_wk2 - def_success_rate_wk1,
+  
+  def_rush_success_rate_change_from_week_1 =
+    def_rush_success_rate_wk2 - def_rush_success_rate_wk1,
+  
+  def_pass_success_rate_change_from_week_1 =
+    def_pass_success_rate_wk2 - def_pass_success_rate_wk1,
+  
+  off_average_air_yards_depth_change_from_week_1 =
+    off_average_air_yards_depth_wk2 - off_average_air_yards_depth_wk1,
+  
 
   # Volume — simply Week 2 minus Week 1
   defensive_plays_change_from_week_1 =
     defensive_plays_wk2 - defensive_plays_wk1,
-
+  
 
   # Lower is better — reverse the subtraction
   yards_allowed_change_from_week_1 =
@@ -1085,7 +1277,10 @@ mutate(
     EPA_rushing_given_per_play_wk1 - EPA_rushing_given_per_play_wk2,
 
   QB_EPA_given_per_play_change_from_week_1 =
-    QB_EPA_given_per_play_wk1 - QB_EPA_given_per_play_wk2)
+    QB_EPA_given_per_play_wk1 - QB_EPA_given_per_play_wk2,
+  
+  def_average_air_yards_depth_change_from_week_1 =
+    def_average_air_yards_depth_wk2 - def_average_air_yards_depth_wk1)
 ```
 
 
@@ -1121,6 +1316,10 @@ Chargers_Wk1_Wk2_table = tibble(
     "EPA Passing / Play",
     "EPA Rushing / Play",
     "QB EPA / Play",
+    "Off Success Rate",
+    "Off Rush Success Rate",
+    "Off Pass Success Rate",
+    "Off Average Air Yards Depth",
     
     # Defense
     "Yards Allowed",
@@ -1134,7 +1333,11 @@ Chargers_Wk1_Wk2_table = tibble(
     "EPA Given Up / Play",
     "EPA Passing Given / Play",
     "EPA Rushing Given / Play",
-    "QB EPA Given / Play"),
+    "QB EPA Given / Play",
+    "Def Success Rate",
+    "Def Rush Success Rate",
+    "Def Pass Success Rate",
+    "Def Average Air Yards Depth"),
   
   Week_1 = c(
     Chargers_Wk1_vs_Wk2$points_wk1,
@@ -1153,6 +1356,10 @@ Chargers_Wk1_Wk2_table = tibble(
     Chargers_Wk1_vs_Wk2$EPA_passing_per_play_wk1,
     Chargers_Wk1_vs_Wk2$EPA_rushing_per_play_wk1,
     Chargers_Wk1_vs_Wk2$QB_EPA_per_play_wk1,
+    Chargers_Wk1_vs_Wk2$off_success_rate_wk1,
+    Chargers_Wk1_vs_Wk2$off_rush_success_rate_wk1,
+    Chargers_Wk1_vs_Wk2$off_pass_success_rate_wk1,
+    Chargers_Wk1_vs_Wk2$off_average_air_yards_depth_wk1,
     
     Chargers_Wk1_vs_Wk2$yards_allowed_wk1,
     Chargers_Wk1_vs_Wk2$passing_yards_allowed_wk1,
@@ -1165,7 +1372,11 @@ Chargers_Wk1_Wk2_table = tibble(
     Chargers_Wk1_vs_Wk2$EPA_given_up_per_play_wk1,
     Chargers_Wk1_vs_Wk2$EPA_passing_given_per_play_wk1,
     Chargers_Wk1_vs_Wk2$EPA_rushing_given_per_play_wk1,
-    Chargers_Wk1_vs_Wk2$QB_EPA_given_per_play_wk1),
+    Chargers_Wk1_vs_Wk2$QB_EPA_given_per_play_wk1,
+    Chargers_Wk1_vs_Wk2$def_success_rate_wk1,
+    Chargers_Wk1_vs_Wk2$def_rush_success_rate_wk1,
+    Chargers_Wk1_vs_Wk2$def_pass_success_rate_wk1,
+    Chargers_Wk1_vs_Wk2$def_average_air_yards_depth_wk1),
   
   Week_2 = c(
     Chargers_Wk1_vs_Wk2$points_wk2,
@@ -1184,6 +1395,10 @@ Chargers_Wk1_Wk2_table = tibble(
     Chargers_Wk1_vs_Wk2$EPA_passing_per_play_wk2,
     Chargers_Wk1_vs_Wk2$EPA_rushing_per_play_wk2,
     Chargers_Wk1_vs_Wk2$QB_EPA_per_play_wk2,
+    Chargers_Wk1_vs_Wk2$off_success_rate_wk2,
+    Chargers_Wk1_vs_Wk2$off_rush_success_rate_wk2,
+    Chargers_Wk1_vs_Wk2$off_pass_success_rate_wk2,
+    Chargers_Wk1_vs_Wk2$off_average_air_yards_depth_wk2,
     
     Chargers_Wk1_vs_Wk2$yards_allowed_wk2,
     Chargers_Wk1_vs_Wk2$passing_yards_allowed_wk2,
@@ -1196,7 +1411,11 @@ Chargers_Wk1_Wk2_table = tibble(
     Chargers_Wk1_vs_Wk2$EPA_given_up_per_play_wk2,
     Chargers_Wk1_vs_Wk2$EPA_passing_given_per_play_wk2,
     Chargers_Wk1_vs_Wk2$EPA_rushing_given_per_play_wk2,
-    Chargers_Wk1_vs_Wk2$QB_EPA_given_per_play_wk2),
+    Chargers_Wk1_vs_Wk2$QB_EPA_given_per_play_wk2,
+    Chargers_Wk1_vs_Wk2$def_success_rate_wk2,
+    Chargers_Wk1_vs_Wk2$def_rush_success_rate_wk2,
+    Chargers_Wk1_vs_Wk2$def_pass_success_rate_wk2,
+    Chargers_Wk1_vs_Wk2$def_average_air_yards_depth_wk2),
   
   Difference = c(
     Chargers_Wk1_vs_Wk2$points_change_from_week_1,
@@ -1215,6 +1434,11 @@ Chargers_Wk1_Wk2_table = tibble(
     Chargers_Wk1_vs_Wk2$EPA_passing_per_play_change_from_week_1,
     Chargers_Wk1_vs_Wk2$EPA_rushing_per_play_change_from_week_1,
     Chargers_Wk1_vs_Wk2$QB_EPA_per_play_change_from_week_1,
+    Chargers_Wk1_vs_Wk2$off_success_rate_change_from_week_1,
+    Chargers_Wk1_vs_Wk2$off_rush_success_rate_change_from_week_1,
+    Chargers_Wk1_vs_Wk2$off_pass_success_rate_change_from_week_1,
+    Chargers_Wk1_vs_Wk2$off_average_air_yards_depth_change_from_week_1,
+
     
     Chargers_Wk1_vs_Wk2$yards_allowed_change_from_week_1,
     Chargers_Wk1_vs_Wk2$passing_yards_allowed_change_from_week_1,
@@ -1227,7 +1451,11 @@ Chargers_Wk1_Wk2_table = tibble(
     Chargers_Wk1_vs_Wk2$EPA_given_up_per_play_change_from_week_1,
     Chargers_Wk1_vs_Wk2$EPA_passing_given_per_play_change_from_week_1,
     Chargers_Wk1_vs_Wk2$EPA_rushing_given_per_play_change_from_week_1,
-    Chargers_Wk1_vs_Wk2$QB_EPA_given_per_play_change_from_week_1)) %>%
+    Chargers_Wk1_vs_Wk2$QB_EPA_given_per_play_change_from_week_1,
+    Chargers_Wk1_vs_Wk2$def_success_rate_change_from_week_1,
+    Chargers_Wk1_vs_Wk2$def_rush_success_rate_change_from_week_1,
+    Chargers_Wk1_vs_Wk2$def_pass_success_rate_change_from_week_1,
+    Chargers_Wk1_vs_Wk2$def_average_air_yards_depth_change_from_week_1))%>%
   mutate(
     Direction = case_when(
       Difference > 0 ~ "↑",
