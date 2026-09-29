@@ -221,6 +221,8 @@ offense_wk_1 = league_wk_1%>%
     
     sacks_allowed = sum(sack, na.rm = TRUE),
     
+    pressures_allowed = sum(qb_hit, na.rm = TRUE),
+
     incomplete_passes = sum(incomplete_pass, na.rm = TRUE),
     
     offensive_plays = n(),
@@ -235,6 +237,8 @@ offense_wk_1 = league_wk_1%>%
     
     sack_rate =
       sacks_allowed / pass_plays,
+    
+    pressure_allowed_rate = pressures_allowed / pass_plays, 
     
     incomplete_pass_rate =
       incomplete_passes / pass_plays,
@@ -302,7 +306,7 @@ defense_wk_1 = league_wk_1%>%
       rushing_yards,
       na.rm = TRUE),
     
-    defensive_turnovers = sum(
+    defensive_takeaways = sum(
       interception + fumble_forced,
       na.rm = TRUE),
     
@@ -340,6 +344,8 @@ defense_wk_1 = league_wk_1%>%
       sack,
       na.rm = TRUE),
     
+    pressures = sum(qb_hit, na.rm = TRUE),
+
     incomplete_passes_forced = sum(
       incomplete_pass,
       na.rm = TRUE),
@@ -357,6 +363,8 @@ defense_wk_1 = league_wk_1%>%
     sack_forced_rate =
       sacks_forced / pass_plays_faced,
     
+    pressure_rate = pressures / pass_plays_faced, 
+
     incomplete_pass_forced_rate =
       incomplete_passes_forced /
       pass_plays_faced,
@@ -421,7 +429,7 @@ league_wk_1_summary = offense_wk_1%>%
       EPA_given_up_per_play,
     
     turnover_differential =
-      defensive_turnovers - offensive_turnovers)%>%
+      defensive_takeaways - offensive_turnovers)%>%
   mutate(
     points_rank = min_rank(desc(points)),
     
@@ -453,6 +461,10 @@ league_wk_1_summary = offense_wk_1%>%
     
     sack_rate_rank = min_rank(sack_rate),
     
+    pressures_allowed_rank = min_rank(pressures_allowed),
+    
+    pressure_allowed_rate_rank = min_rank(pressure_allowed_rate),
+
     incomplete_pass_rate_rank = min_rank(incomplete_pass_rate),
     
     third_down_conversion_rate_rank = min_rank(desc(third_down_conversion_rate)),
@@ -479,7 +491,7 @@ league_wk_1_summary = offense_wk_1%>%
     
     rushing_yards_allowed_rank = min_rank((rushing_yards_allowed)),
     
-    defensive_turnovers_rank = min_rank(desc(defensive_turnovers)),
+    defensive_takeaways_rank = min_rank(desc(defensive_takeaways)),
     
     EPA_given_up_rank = min_rank(EPA_given_up),
     
@@ -496,6 +508,10 @@ league_wk_1_summary = offense_wk_1%>%
     sacks_forced_rank = min_rank(desc(sacks_forced)),
     
     sack_forced_rate_rank = min_rank(desc(sack_forced_rate)),
+    
+    pressures_rank = min_rank(desc(pressures)),
+    
+    pressure_rate_rank = min_rank(desc(pressure_rate)),
     
     incomplete_pass_forced_rate_rank = min_rank(desc(incomplete_pass_forced_rate)),
     
@@ -546,8 +562,8 @@ league_wk_1_summary = league_wk_1_summary%>%
          offensive_turnovers, 
          offensive_turnovers_rank, 
          defensive_plays, 
-         defensive_turnovers, 
-         defensive_turnovers_rank, 
+         defensive_takeaways, 
+         defensive_takeaways_rank, 
          Net_EPA, 
          Net_EPA_rank, 
          Net_EPA_per_play, 
@@ -568,6 +584,10 @@ league_wk_1_summary = league_wk_1_summary%>%
          sacks_allowed_rank,
          sack_rate,
          sack_rate_rank,
+         pressures_allowed,
+         pressures_allowed_rank,
+         pressure_allowed_rate,
+         pressure_allowed_rate_rank,
          incomplete_pass_rate,
          incomplete_pass_rate_rank,
          third_down_conversion_rate,
@@ -594,8 +614,6 @@ league_wk_1_summary = league_wk_1_summary%>%
          passing_yards_allowed_rank,
          rushing_yards_allowed,
          rushing_yards_allowed_rank,
-         defensive_turnovers,
-         defensive_turnovers_rank,
          EPA_given_up, 
          EPA_given_up_rank,
          EPA_passing_given,
@@ -612,6 +630,10 @@ league_wk_1_summary = league_wk_1_summary%>%
          sacks_forced_rank,
          sack_forced_rate,
          sack_forced_rate_rank,
+         pressures,
+         pressures_rank,
+         pressure_rate,
+         pressure_rate_rank, 
          incomplete_pass_forced_rate,
          incomplete_pass_forced_rate_rank,
          third_down_conversion_rate_allowed,
@@ -656,8 +678,6 @@ stats_to_compare = c(
   "rushing_yards",
   "turnover_differential",
   "offensive_turnovers",
-  "defensive_plays",
-  "defensive_turnovers",
   "Net_EPA",
   "Net_EPA_per_play",
   "EPA_generated",
@@ -668,6 +688,8 @@ stats_to_compare = c(
   "redzone_conversion_rate",
   "sacks_allowed",
   "sack_rate",
+  "pressures_allowed",
+  "pressure_allowed_rate",
   "incomplete_pass_rate",
   "third_down_conversion_rate",
   "EPA_generated_per_play",
@@ -680,10 +702,11 @@ stats_to_compare = c(
   "off_average_air_yards_depth")
 
 defensive_stats_to_compare = c(
+  "defensive_plays",
   "yards_allowed",
   "passing_yards_allowed",
   "rushing_yards_allowed",
-  "defensive_turnovers",
+  "defensive_takeaways",
   "EPA_given_up",
   "EPA_passing_given",
   "EPA_rushing_given",
@@ -692,6 +715,8 @@ defensive_stats_to_compare = c(
   "redzone_conversion_rate_allowed",
   "sacks_forced",
   "sack_forced_rate",
+  "pressures",
+  "pressure_rate", 
   "incomplete_pass_forced_rate",
   "third_down_conversion_rate_allowed",
   "EPA_given_up_per_play",
@@ -738,8 +763,6 @@ offense_stats = c(
   "rushing_yards",
   "turnover_differential",
   "offensive_turnovers",
-  "defensive_plays",
-  "defensive_turnovers",
   "Net_EPA",
   "Net_EPA_per_play",
   "EPA_generated",
@@ -750,6 +773,8 @@ offense_stats = c(
   "redzone_conversion_rate",
   "sacks_allowed",
   "sack_rate",
+  "pressures_allowed",
+  "pressure_allowed_rate",
   "incomplete_pass_rate",
   "third_down_conversion_rate",
   "EPA_generated_per_play",
@@ -760,6 +785,14 @@ offense_stats = c(
   "off_rush_success_rate",
   "off_pass_success_rate",
   "off_average_air_yards_depth")
+
+offensive_lower_is_better = c(
+  "offensive_turnovers",
+  "sacks_allowed",
+  "sack_rate",
+  "pressures_allowed",
+  "pressure_allowed_rate",
+  "incomplete_pass_rate")
 
 heatmap_data = league_wk_1_summary%>%
   select(team, all_of(offense_stats))%>%
@@ -777,10 +810,11 @@ heatmap_data = league_wk_1_summary%>%
 Defense
 ```{r}
 defensive_stats = c(
+  "defensive_plays",
+  "defensive_takeaways",
   "yards_allowed",
   "passing_yards_allowed",
   "rushing_yards_allowed",
-  "defensive_turnovers",
   "EPA_given_up",
   "EPA_passing_given",
   "EPA_rushing_given",
@@ -789,6 +823,8 @@ defensive_stats = c(
   "redzone_conversion_rate_allowed",
   "sacks_forced",
   "sack_forced_rate",
+  "pressures",
+  "pressure_rate",
   "incomplete_pass_forced_rate",
   "third_down_conversion_rate_allowed",
   "EPA_given_up_per_play",
@@ -801,6 +837,7 @@ defensive_stats = c(
   "def_average_air_yards_depth")
 
 defensive_lower_is_better = c(
+  "defensive_plays",
   "yards_allowed",
   "passing_yards_allowed",
   "rushing_yards_allowed",
@@ -833,9 +870,10 @@ heatmap_data = league_wk_1_summary%>%
     vs_league_avg = value - league_avg)%>%
   ungroup() %>%
   mutate(
-    performance_vs_avg = case_when(
-  stat %in% defensive_lower_is_better ~ -vs_league_avg,
-  TRUE ~ vs_league_avg))%>%
+  performance_vs_avg = case_when(
+    stat %in% defensive_lower_is_better ~ -vs_league_avg,
+    stat %in% offensive_lower_is_better ~ -vs_league_avg,
+    TRUE ~ vs_league_avg))%>%
   group_by(stat)%>%
   mutate(
     z_score = (
