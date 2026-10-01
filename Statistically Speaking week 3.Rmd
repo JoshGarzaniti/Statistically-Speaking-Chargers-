@@ -3017,8 +3017,78 @@ league_vs_chargers_season = league_avg%>%
 
 ```
 
+Creating Seasonal Difference
+```{r}
+league_vs_chargers_season = league_vs_chargers_season%>%
+  mutate(Wk1_difference = Chargers_Wk1 - League_Wk1,
+         Wk2_difference = Chargers_Wk2 - League_Wk2,
+         Wk3_difference = Chargers_Wk3 - League_Wk3,
+    Season_difference = Chargers_Season_Avg - League_Season_Avg)%>%
+  mutate(Season_Direction = case_when(
+      Season_difference > 0 ~ "↑",
+      Season_difference < 0 ~ "↓",
+      TRUE ~ "→"))%>%
+  select(stat, 
+         League_Wk1, 
+         Chargers_Wk1, 
+         Wk1_difference,
+         League_Wk2,
+         Chargers_Wk2,
+         Wk2_difference,
+         League_Wk3,
+         Chargers_Wk3,
+         Wk3_difference,
+         League_Season_Avg,
+         Chargers_Season_Avg,
+         Season_difference,
+         Season_Direction)
 
 
+league_vs_chargers_season3_gt = league_vs_chargers_season%>%
+  gt()%>%
+  tab_header(
+    title = "Chargers: Week 2 vs. Week 3",
+    subtitle = "Positive differences indicate improved performance")%>%
+  cols_label(
+    stat = "Statistic",
+    League_Season_Avg = "League",
+    Chargers_Season_Avg = "Chargers",
+    Season_difference = "Difference",
+    Season_Direction = "Direction")%>%
+  fmt_number(
+    columns = c(League_Season_Avg, Chargers_Season_Avg, Season_difference),
+    decimals = 2)%>%
+  cols_align(
+    align = "center",
+    columns = c(League_Season_Avg, Chargers_Season_Avg, Season_difference, Season_Direction))%>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_column_labels(everything()))%>%
+  tab_style(
+    style = cell_text(size = px(20), weight = "bold"),
+    locations = cells_body(columns = Season_Direction))%>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_body(columns = stat))%>%
+  opt_row_striping()%>%
+  opt_table_font(
+    font = list(
+      google_font("Roboto"),
+      default_fonts()))%>%
+  tab_options(
+    table.font.size = px(14),
+    heading.title.font.size = px(22),
+    heading.subtitle.font.size = px(14))
+
+league_vs_chargers_season3_gt 
+```
+
+Saving table
+```{r}
+gtsave(
+  league_vs_chargers_season3_gt,
+  "C:/Personal Projects/Statistically Speaking/league_vs_chargers_season3_gt.png")
+```
 
 
 
