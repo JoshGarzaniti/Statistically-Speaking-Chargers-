@@ -1,0 +1,1417 @@
+---
+title: "Statistically Speaking 2026 Week 4"
+author: "Josh Garzaniti"
+date: "2026-09-21"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Install and load in needed libraries
+```{r}
+library(nflfastR)
+library(nflreadr)
+library(tidyverse)
+library(stringr)
+library(ggplot2)
+library(ggdark)
+library(caret)
+library(xgboost)
+library(randomForest)
+library(ggrepel)
+library(nflplotR)
+library(mice)
+library(lme4)
+library(here)
+library(DT)
+library(htmlwidgets)
+library(gt)
+library(purrr)
+```
+Load in our play by play data
+```{r}
+pbp = load_pbp(2026)
+
+#Create redzone variable:
+pbp = pbp%>%
+  mutate(redzone = ifelse(yardline_100 <= 20, 1, 0))
+
+league = pbp
+```
+
+## How did the league do?
+
+
+Create a function to automate pulling stats every week
+```{r}
+
+calculate_week_stats = function(week_number) {
+  
+  # -----------------------------
+  # Filter league to selected week
+  # -----------------------------
+  
+  league_week = league%>%
+    filter(week == week_number)
+  
+  
+  # -----------------------------
+  # Points
+  # -----------------------------
+  
+  team_points = league_week%>%
+    group_by(game_id)%>%
+    summarise(
+      home_team = first(home_team),
+      away_team = first(away_team),
+      home_points = max(total_home_score, na.rm = TRUE),
+      away_points = max(total_away_score, na.rm = TRUE),
+      .groups = "drop")
+  
+  team_points = bind_rows(
+    
+    team_points %>%
+      transmute(
+        team = home_team,
+        points = home_points),
+    
+    team_points %>%
+      transmute(
+        team = away_team,
+        points = away_points))
+  
+  
+  # -----------------------------
+  # Offense
+  # -----------------------------
+  
+  offense = league_week%>%
+    filter(
+      !is.na(posteam),
+      !play_type %in% c(
+        "kickoff",
+        "extra_point",
+        "field_goal"))%>%
+    group_by(posteam)%>%
+    summarise(
+      
+      yards = sum(
+        yards_gained,
+        na.rm = TRUE),
+      
+      passing_yards = sum(
+        passing_yards,
+        na.rm = TRUE),
+      
+      rushing_yards = sum(
+        rushing_yards,
+        na.rm = TRUE),
+      
+      offensive_turnovers = sum(
+        interception + fumble_lost,
+        na.rm = TRUE),
+      
+      EPA_generated = sum(
+        epa,
+        na.rm = TRUE),
+      
+      EPA_passing = sum(
+        epa[play_type == "pass"],
+        na.rm = TRUE),
+      
+      EPA_rushing = sum(
+        epa[play_type == "run"],
+        na.rm = TRUE),
+      
+      QB_EPA = sum(
+        qb_epa,
+        na.rm = TRUE),
+      
+      redzone_EPA = sum(
+        epa[redzone == 1],
+        na.rm = TRUE),
+      
+      redzone_drives = n_distinct(
+        drive[redzone == 1]),
+      
+      redzone_touchdowns = n_distinct(
+        drive[
+          redzone == 1 &
+          touchdown == 1]),
+      
+      redzone_conversion_rate =
+        redzone_touchdowns / redzone_drives,
+      
+      sacks_allowed = sum(
+        sack,
+        na.rm = TRUE),
+      
+      pressures_allowed = sum(
+        qb_hit,
+        na.rm = TRUE),
+      
+      incomplete_passes = sum(
+        incomplete_pass,
+        na.rm = TRUE),
+      
+      offensive_plays = n(),
+      
+      pass_plays = sum(
+        play_type == "pass",
+        na.rm = TRUE),
+      
+      rush_plays = sum(
+        play_type == "run",
+        na.rm = TRUE),
+      
+      sack_rate =
+        sacks_allowed / pass_plays,
+      
+      pressure_allowed_rate =
+        pressures_allowed / pass_plays,
+      
+      incomplete_pass_rate =
+        incomplete_passes / pass_plays,
+      
+      third_downs_faced =
+        sum(down == 3, na.rm = TRUE),
+      
+      third_down_conversion_rate =
+        sum(third_down_converted, na.rm = TRUE) /
+        third_downs_faced,
+      
+      EPA_generated_per_play =
+        EPA_generated / offensive_plays,
+      
+      EPA_passing_per_play =
+        EPA_passing / pass_plays,
+      
+      EPA_rushing_per_play =
+        EPA_rushing / rush_plays,
+      
+      QB_EPA_per_play =
+        QB_EPA / pass_plays,
+      
+      off_success_rate =
+        sum(success, na.rm = TRUE) /
+        offensive_plays,
+      
+      off_rush_success_rate =
+        sum(
+          success[play_type == "run"],
+          na.rm = TRUE) /
+        rush_plays,
+      
+      off_pass_success_rate =
+        sum(
+          success[play_type == "pass"],
+          na.rm = TRUE) /
+        pass_plays,
+      
+      off_average_air_yards_depth =
+        mean(air_yards, na.rm = TRUE),
+      
+      .groups = "drop")%>%
+    rename(team = posteam)
+  
+  
+  # -----------------------------
+  # Defense
+  # -----------------------------
+  
+  defense = league_week%>%
+    filter(
+      !is.na(defteam),
+      !play_type %in% c(
+        "kickoff",
+        "extra_point",
+        "field_goal"))%>%
+    group_by(defteam)%>%
+    summarise(
+      
+      yards_allowed = sum(
+        yards_gained,
+        na.rm = TRUE),
+      
+      passing_yards_allowed = sum(
+        passing_yards,
+        na.rm = TRUE),
+      
+      rushing_yards_allowed = sum(
+        rushing_yards,
+        na.rm = TRUE),
+      
+      defensive_takeaways = sum(
+        interception + fumble_forced,
+        na.rm = TRUE),
+      
+      EPA_given_up = sum(
+        epa,
+        na.rm = TRUE),
+      
+      EPA_passing_given = sum(
+        epa[play_type == "pass"],
+        na.rm = TRUE),
+      
+      EPA_rushing_given = sum(
+        epa[play_type == "run"],
+        na.rm = TRUE),
+      
+      QB_EPA_given = sum(
+        qb_epa,
+        na.rm = TRUE),
+      
+      redzone_EPA_given = sum(
+        epa[redzone == 1],
+        na.rm = TRUE),
+      
+      redzone_drives_allowed = n_distinct(
+        drive[redzone == 1]),
+      
+      redzone_touchdowns_allowed = n_distinct(
+        drive[
+          redzone == 1 &
+          touchdown == 1]),
+      
+      redzone_conversion_rate_allowed =
+        redzone_touchdowns_allowed /
+        redzone_drives_allowed,
+      
+      sacks_forced = sum(
+        sack,
+        na.rm = TRUE),
+      
+      pressures = sum(
+        qb_hit,
+        na.rm = TRUE),
+      
+      incomplete_passes_forced = sum(
+        incomplete_pass,
+        na.rm = TRUE),
+      
+      defensive_plays = n(),
+      
+      pass_plays_faced = sum(
+        play_type == "pass",
+        na.rm = TRUE),
+      
+      rush_plays_faced = sum(
+        play_type == "run",
+        na.rm = TRUE),
+      
+      sack_forced_rate =
+        sacks_forced / pass_plays_faced,
+      
+      pressure_rate =
+        pressures / pass_plays_faced,
+      
+      incomplete_pass_forced_rate =
+        incomplete_passes_forced /
+        pass_plays_faced,
+      
+      third_downs_forced =
+        sum(down == 3, na.rm = TRUE),
+      
+      third_down_conversion_rate_allowed =
+        sum(third_down_converted, na.rm = TRUE) /
+        third_downs_forced,
+      
+      EPA_given_up_per_play =
+        EPA_given_up / defensive_plays,
+      
+      EPA_passing_given_per_play =
+        EPA_passing_given / pass_plays_faced,
+      
+      EPA_rushing_given_per_play =
+        EPA_rushing_given / rush_plays_faced,
+      
+      QB_EPA_given_per_play =
+        QB_EPA_given / pass_plays_faced,
+      
+      def_success_rate =
+        1 - (
+          sum(success, na.rm = TRUE) /
+          defensive_plays),
+      
+      def_rush_success_rate =
+        1 - (
+          sum(
+            success[play_type == "run"],
+            na.rm = TRUE
+          ) /
+          rush_plays_faced),
+      
+      def_pass_success_rate =
+        1 - (
+          sum(
+            success[play_type == "pass"],
+            na.rm = TRUE) /
+          pass_plays_faced),
+      
+      def_average_air_yards_depth =
+        mean(air_yards, na.rm = TRUE),
+      
+      .groups = "drop")%>%
+    rename(team = defteam)
+  
+  
+  # -----------------------------
+  # Join offense + defense + points
+  # -----------------------------
+  
+  weekly_summary = offense%>%
+    left_join(
+      defense,
+      by = "team")%>%
+    left_join(
+      team_points,
+      by = "team")%>%
+    mutate(
+      
+      Net_EPA =
+        EPA_generated - EPA_given_up,
+      
+      Net_EPA_per_play =
+        EPA_generated_per_play -
+        EPA_given_up_per_play,
+      
+      turnover_differential =
+        defensive_takeaways -
+        offensive_turnovers,
+      
+      week = week_number)
+  
+  
+  return(weekly_summary)
+}
+
+week_4_stats = calculate_week_stats(4)
+```
+
+
+Map out stats to their respective weeks
+```{r}
+
+all_weekly_stats = map(
+  sort(unique(league$week)),
+  calculate_week_stats)%>%
+  list_rbind()%>%
+  arrange(week, team)
+```
+
+Create the Team Ranks for each stat
+```{r}
+all_weekly_stats = all_weekly_stats%>%
+  group_by(week)%>%
+  mutate(
+    
+    points_rank =
+      min_rank(desc(points)),
+    
+    offensive_plays_rank =
+      min_rank(desc(offensive_plays)),
+    
+    defensive_plays_rank =
+      min_rank(defensive_plays),
+    
+    yards_rank =
+      min_rank(desc(yards)),
+    
+    passing_yards_rank =
+      min_rank(desc(passing_yards)),
+    
+    rushing_yards_rank =
+      min_rank(desc(rushing_yards)),
+    
+    offensive_turnovers_rank =
+      min_rank(offensive_turnovers),
+    
+    EPA_generated_rank =
+      min_rank(desc(EPA_generated)),
+    
+    EPA_passing_rank =
+      min_rank(desc(EPA_passing)),
+    
+    EPA_rushing_rank =
+      min_rank(desc(EPA_rushing)),
+    
+    QB_EPA_rank =
+      min_rank(desc(QB_EPA)),
+    
+    redzone_EPA_rank =
+      min_rank(desc(redzone_EPA)),
+    
+    redzone_conversion_rate_rank =
+      min_rank(desc(redzone_conversion_rate)),
+    
+    sacks_allowed_rank =
+      min_rank(sacks_allowed),
+    
+    sack_rate_rank =
+      min_rank(sack_rate),
+    
+    pressures_allowed_rank =
+      min_rank(pressures_allowed),
+    
+    pressure_allowed_rate_rank =
+      min_rank(pressure_allowed_rate),
+    
+    incomplete_pass_rate_rank =
+      min_rank(incomplete_pass_rate),
+    
+    third_down_conversion_rate_rank =
+      min_rank(desc(third_down_conversion_rate)),
+    
+    EPA_generated_per_play_rank =
+      min_rank(desc(EPA_generated_per_play)),
+    
+    EPA_passing_per_play_rank =
+      min_rank(desc(EPA_passing_per_play)),
+    
+    EPA_rushing_per_play_rank =
+      min_rank(desc(EPA_rushing_per_play)),
+    
+    QB_EPA_per_play_rank =
+      min_rank(desc(QB_EPA_per_play)),
+    
+    off_success_rate_rank =
+      min_rank(desc(off_success_rate)),
+    
+    off_rush_success_rate_rank =
+      min_rank(desc(off_rush_success_rate)),
+    
+    off_pass_success_rate_rank =
+      min_rank(desc(off_pass_success_rate)),
+    
+    off_average_air_yards_depth_rank =
+      min_rank(desc(off_average_air_yards_depth)),
+    
+    yards_allowed_rank =
+      min_rank(yards_allowed),
+    
+    passing_yards_allowed_rank =
+      min_rank(passing_yards_allowed),
+    
+    rushing_yards_allowed_rank =
+      min_rank(rushing_yards_allowed),
+    
+    defensive_takeaways_rank =
+      min_rank(desc(defensive_takeaways)),
+    
+    EPA_given_up_rank =
+      min_rank(EPA_given_up),
+    
+    EPA_passing_given_rank =
+      min_rank(EPA_passing_given),
+    
+    EPA_rushing_given_rank =
+      min_rank(EPA_rushing_given),
+    
+    QB_EPA_given_rank =
+      min_rank(QB_EPA_given),
+    
+    redzone_EPA_given_rank =
+      min_rank(redzone_EPA_given),
+    
+    redzone_conversion_rate_allowed_rank =
+      min_rank(redzone_conversion_rate_allowed),
+    
+    sacks_forced_rank =
+      min_rank(desc(sacks_forced)),
+    
+    sack_forced_rate_rank =
+      min_rank(desc(sack_forced_rate)),
+    
+    pressures_rank =
+      min_rank(desc(pressures)),
+    
+    pressure_rate_rank =
+      min_rank(desc(pressure_rate)),
+    
+    incomplete_pass_forced_rate_rank =
+      min_rank(desc(incomplete_pass_forced_rate)),
+    
+    third_down_conversion_rate_allowed_rank =
+      min_rank(desc(third_down_conversion_rate_allowed)),
+    
+    EPA_given_up_per_play_rank =
+      min_rank(EPA_given_up_per_play),
+    
+    EPA_passing_given_per_play_rank =
+      min_rank(EPA_passing_given_per_play),
+    
+    EPA_rushing_given_per_play_rank =
+      min_rank(EPA_rushing_given_per_play),
+    
+    QB_EPA_given_per_play_rank =
+      min_rank(QB_EPA_given_per_play),
+    
+    def_success_rate_rank =
+      min_rank(desc(def_success_rate)),
+    
+    def_rush_success_rate_rank =
+      min_rank(desc(def_rush_success_rate)),
+    
+    def_pass_success_rate_rank =
+      min_rank(desc(def_pass_success_rate)),
+    
+    def_average_air_yards_depth_rank =
+      min_rank(def_average_air_yards_depth),
+    
+    Net_EPA_rank =
+      min_rank(desc(Net_EPA)),
+    
+    Net_EPA_per_play_rank =
+      min_rank(desc(Net_EPA_per_play)),
+    
+    turnover_differential_rank =
+      min_rank(desc(turnover_differential)))%>%
+  ungroup()
+```
+
+
+```{r}
+league_wk_4_summary = all_weekly_stats%>%
+  filter(week == 4)
+```
+
+##Segmenting our Stats into offense and defense
+
+Offense
+```{r}
+offensive_stats = c(
+  "points",
+  "offensive_plays",
+  "yards",
+  "passing_yards",
+  "rushing_yards",
+  "turnover_differential",
+  "offensive_turnovers",
+  "Net_EPA",
+  "Net_EPA_per_play",
+  "EPA_generated",
+  "EPA_passing",
+  "EPA_rushing",
+  "QB_EPA",
+  "redzone_EPA",
+  "redzone_conversion_rate",
+  "sacks_allowed",
+  "sack_rate",
+  "pressures_allowed",
+  "pressure_allowed_rate",
+  "incomplete_pass_rate",
+  "third_down_conversion_rate",
+  "EPA_generated_per_play",
+  "EPA_passing_per_play",
+  "EPA_rushing_per_play",
+  "QB_EPA_per_play",
+  "off_success_rate",
+  "off_rush_success_rate",
+  "off_pass_success_rate",
+  "off_average_air_yards_depth")
+
+offensive_lower_is_better = c(
+  "offensive_turnovers",
+  "sacks_allowed",
+  "sack_rate",
+  "pressures_allowed",
+  "pressure_allowed_rate",
+  "incomplete_pass_rate")
+
+heatmap_data = league_wk_4_summary%>%
+  select(team, all_of(offensive_stats))%>%
+  pivot_longer(
+    cols = -team,
+    names_to = "stat",
+    values_to = "value")%>%
+  group_by(stat)%>%
+  mutate(
+    league_avg = mean(value, na.rm = TRUE),
+    vs_league_avg = value - league_avg)%>%
+  ungroup()
+```
+
+Defense
+```{r}
+defensive_stats = c(
+  "defensive_plays",
+  "defensive_takeaways",
+  "yards_allowed",
+  "passing_yards_allowed",
+  "rushing_yards_allowed",
+  "EPA_given_up",
+  "EPA_passing_given",
+  "EPA_rushing_given",
+  "QB_EPA_given",
+  "redzone_EPA_given",
+  "redzone_conversion_rate_allowed",
+  "sacks_forced",
+  "sack_forced_rate",
+  "pressures",
+  "pressure_rate",
+  "incomplete_pass_forced_rate",
+  "third_down_conversion_rate_allowed",
+  "EPA_given_up_per_play",
+  "EPA_passing_given_per_play",
+  "EPA_rushing_given_per_play",
+  "QB_EPA_given_per_play",
+  "def_success_rate",
+  "def_rush_success_rate",
+  "def_pass_success_rate",
+  "def_average_air_yards_depth")
+
+defensive_lower_is_better = c(
+  "defensive_plays",
+  "yards_allowed",
+  "passing_yards_allowed",
+  "rushing_yards_allowed",
+  "EPA_given_up",
+  "EPA_passing_given",
+  "EPA_rushing_given",
+  "QB_EPA_given",
+  "redzone_EPA_given",
+  "redzone_conversion_rate_allowed",
+  "third_down_conversion_rate_allowed",
+  "EPA_given_up_per_play",
+  "EPA_passing_given_per_play",
+  "EPA_rushing_given_per_play",
+  "QB_EPA_given_per_play",
+  "def_average_air_yards_depth")
+
+all_stats = c(
+ offensive_stats,
+  defensive_stats)
+
+heatmap_stats = c(
+  offensive_stats,
+  defensive_stats)
+
+heatmap_data = league_wk_4_summary%>%
+  select(team, all_of(heatmap_stats))%>%
+  pivot_longer(
+    cols = -team,
+    names_to = "stat",
+    values_to = "value")%>%
+  group_by(stat) %>%
+  mutate(
+    league_avg = mean(value, na.rm = TRUE),
+    vs_league_avg = value - league_avg)%>%
+  ungroup() %>%
+mutate(
+  performance_vs_avg = case_when(
+    stat %in% defensive_lower_is_better ~ -vs_league_avg,
+    stat %in% offensive_lower_is_better ~ -vs_league_avg,
+    TRUE ~ vs_league_avg))%>%
+  group_by(stat)%>%
+  mutate(
+    z_score = (
+      performance_vs_avg -
+        mean(performance_vs_avg, na.rm = TRUE)) /
+      sd(performance_vs_avg, na.rm = TRUE))%>%
+  ungroup()
+
+```
+
+
+Offensive Heatmap
+```{r}
+offensive_heatmap_data = heatmap_data%>%
+  filter(stat %in% offensive_stats)
+
+off_heatmap_wk4 = ggplot(
+  offensive_heatmap_data,
+  aes(
+    x = team,
+    y = stat,
+    fill = z_score))+
+  
+  geom_tile(color = "grey20")+
+  
+  scale_fill_gradient2(
+    low = "blue",
+    mid = "white",
+    high = "red",
+    midpoint = 0)+
+  
+  labs(
+    title = "NFL Week 4 Offensive Performance vs. League Average",
+    subtitle = "Positive values indicate above-average performance",
+    x = "Team",
+    y = "Statistic",
+    fill = "Vs. League Avg.")+
+  
+  theme_minimal()+
+  theme(
+    plot.background = element_rect(fill = "black", color = NA),
+    panel.background = element_rect(fill = "black", color = NA),
+    panel.grid = element_blank(),
+    
+    text = element_text(color = "white"),
+    axis.text = element_text(color = "white"),
+    axis.text.x = element_text(
+      angle = 45,
+      hjust = 1,
+      color = "white"),
+    axis.title = element_text(color = "white"),
+    
+    plot.title = element_text(
+      color = "white",
+      face = "bold"),
+    plot.subtitle = element_text(color = "grey80"),
+    
+    legend.background = element_rect(fill = "black", color = NA),
+    legend.text = element_text(color = "white"),
+    legend.title = element_text(color = "white"))
+
+off_heatmap_wk4
+```
+
+Saving Week 4 Heatmap
+```{r}
+ggsave(
+  filename = "C:/Personal Projects/Statistically Speaking/NFL_Week_4_Offensive_Heatmap.png",
+  plot = off_heatmap_wk4,
+  width = 14,
+  height = 8,
+  dpi = 300,
+  bg = "black")
+```
+
+
+Defensive Heatmap
+```{r}
+
+defensive_heatmap_data = heatmap_data%>%
+  filter(stat %in% defensive_stats)
+
+def_heatmap_wk4 = ggplot(
+  defensive_heatmap_data,
+  aes(
+    x = team,
+    y = stat,
+    fill = z_score))+
+  
+  geom_tile(color = "grey20")+
+  
+  scale_fill_gradient2(
+    low = "blue",
+    mid = "white",
+    high = "red",
+    midpoint = 0)+
+  
+  labs(
+    title = "NFL Week 4 Defensive Performance vs. League Average",
+    subtitle = "Positive values indicate above-average performance",
+    x = "Team",
+    y = "Statistic",
+    fill = "Vs. League Avg.")+
+  
+  theme_minimal()+
+  theme(
+    plot.background = element_rect(fill = "black", color = NA),
+    panel.background = element_rect(fill = "black", color = NA),
+    panel.grid = element_blank(),
+    
+    text = element_text(color = "white"),
+    axis.text = element_text(color = "white"),
+    axis.text.x = element_text(
+      angle = 45,
+      hjust = 1,
+      color = "white"),
+    axis.title = element_text(color = "white"),
+    
+    plot.title = element_text(
+      color = "white",
+      face = "bold"),
+    plot.subtitle = element_text(color = "grey80"),
+    
+    legend.background = element_rect(fill = "black", color = NA),
+    legend.text = element_text(color = "white"),
+    legend.title = element_text(color = "white"))
+
+def_heatmap_wk4
+```
+
+Saving Week 4 Heatmap
+```{r}
+ggsave(
+  filename = "C:/Personal Projects/Statistically Speaking/NFL_Week_4_Defensive_Heatmap.png",
+  plot = def_heatmap_wk4,
+  width = 14,
+  height = 8,
+  dpi = 300,
+  bg = "black")
+```
+
+
+Offensive Charts:
+```{r}
+
+off_rush_avg = mean(league_wk_4_summary$EPA_rushing, na.rm = TRUE)
+off_pass_avg = mean(league_wk_4_summary$EPA_passing, na.rm = TRUE)
+
+off_epa_wk_4 = ggplot(
+  league_wk_4_summary,
+  aes(
+    x = EPA_rushing,
+    y = EPA_passing))+
+  
+  nflplotR::geom_nfl_logos(
+    aes(team_abbr = team),
+    width = 0.075)+
+  
+  geom_vline(
+    xintercept = off_rush_avg,
+    linetype = "dashed",
+    color = "grey50")+
+  
+  geom_hline(
+    yintercept = off_pass_avg,
+    linetype = "dashed",
+    color = "grey50")+
+
+  
+  labs(
+    title = "Team Offensive Efficiency",
+    subtitle = "2026 Week 4 | Higher EPA is Better",
+    x = "Rushing EPA",
+    y = "Passing EPA")+
+  
+  theme_minimal()+
+  theme(
+    plot.background = element_rect(fill = "black", color = NA),
+    panel.background = element_rect(fill = "black", color = NA),
+    panel.grid = element_blank(),
+    
+    text = element_text(color = "white"),
+    axis.text = element_text(color = "white"),
+    axis.title = element_text(color = "white"),
+    
+    plot.title = element_text(
+      color = "white",
+      face = "bold"),
+    plot.subtitle = element_text(color = "grey80"))
+
+off_epa_wk_4
+```
+
+Saving chart
+```{r}
+ggsave(
+  filename = "C:/Personal Projects/Statistically Speaking/NFL_Week_4_Offensive EPA Chart.png",
+  plot = off_epa_wk_4,
+  width = 14,
+  height = 8,
+  dpi = 300,
+  bg = "black")
+```
+
+
+Success Rate
+```{r}
+
+off_rush_suc_avg = mean(league_wk_4_summary$off_rush_success_rate, na.rm = TRUE)
+off_pass_suc_avg = mean(league_wk_4_summary$off_pass_success_rate, na.rm = TRUE)
+
+off_suc_wk_4 = ggplot(
+  league_wk_4_summary,
+  aes(
+    x = off_rush_success_rate,
+    y = off_pass_success_rate))+
+  
+  nflplotR::geom_nfl_logos(
+    aes(team_abbr = team),
+    width = 0.075)+
+  
+  geom_vline(
+    xintercept = off_rush_suc_avg,
+    linetype = "dashed",
+    color = "grey50")+
+  
+  geom_hline(
+    yintercept = off_pass_suc_avg,
+    linetype = "dashed",
+    color = "grey50")+
+
+  
+  labs(
+    title = "Team Offensive Success",
+    subtitle = "2026 Week 4 | Higher Success Rate is Better",
+    x = "Rushing Success %",
+    y = "Passing Success %")+
+  
+  theme_minimal()+
+  theme(
+    plot.background = element_rect(fill = "black", color = NA),
+    panel.background = element_rect(fill = "black", color = NA),
+    panel.grid = element_blank(),
+    
+    text = element_text(color = "white"),
+    axis.text = element_text(color = "white"),
+    axis.title = element_text(color = "white"),
+    
+    plot.title = element_text(
+      color = "white",
+      face = "bold"),
+    plot.subtitle = element_text(color = "grey80"))
+
+off_suc_wk_4
+```
+
+Saving chart
+```{r}
+ggsave(
+  filename = "C:/Personal Projects/Statistically Speaking/NFL_Week_4_Offensive Success Rate Chart.png",
+  plot = off_suc_wk_4,
+  width = 14,
+  height = 8,
+  dpi = 300,
+  bg = "black")
+```
+
+
+Defensive Charts:
+```{r}
+
+def_rush_avg = mean(league_wk_4_summary$EPA_rushing_given, na.rm = TRUE)
+def_pass_avg = mean(league_wk_4_summary$EPA_passing_given, na.rm = TRUE)
+
+def_epa_wk_4 = ggplot(
+  league_wk_4_summary,
+  aes(
+    x = EPA_rushing_given,
+    y = EPA_passing_given))+
+  
+  nflplotR::geom_nfl_logos(
+    aes(team_abbr = team),
+    width = 0.075)+
+  
+  geom_vline(
+    xintercept = def_rush_avg,
+    linetype = "dashed",
+    color = "grey50")+
+  
+  geom_hline(
+    yintercept = def_pass_avg,
+    linetype = "dashed",
+    color = "grey50")+
+  
+  scale_x_reverse()+
+  scale_y_reverse()+
+  
+  labs(
+    title = "Team Defensive Efficiency",
+    subtitle = "2026 Week 4 | Lower EPA Allowed is Better",
+    x = "Rushing EPA Allowed",
+    y = "Passing EPA Allowed")+
+  
+  theme_minimal()+
+  theme(
+    plot.background = element_rect(fill = "black", color = NA),
+    panel.background = element_rect(fill = "black", color = NA),
+    panel.grid = element_blank(),
+    
+    text = element_text(color = "white"),
+    axis.text = element_text(color = "white"),
+    axis.title = element_text(color = "white"),
+    
+    plot.title = element_text(
+      color = "white",
+      face = "bold"),
+    plot.subtitle = element_text(color = "grey80"))
+
+def_epa_wk_4
+```
+
+Saving chart
+```{r}
+ggsave(
+  filename = "C:/Personal Projects/Statistically Speaking/NFL_Week_4_Defensive EPA Chart.png",
+  plot = def_epa_wk_4,
+  width = 14,
+  height = 8,
+  dpi = 300,
+  bg = "black")
+```
+
+
+
+Defensive Success Rate
+```{r}
+
+def_rush_suc_avg = mean(league_wk_4_summary$def_rush_success_rate, na.rm = TRUE)
+def_pass_suc_avg = mean(league_wk_4_summary$def_pass_success_rate, na.rm = TRUE)
+
+def_suc_wk_4 = ggplot(
+  league_wk_4_summary,
+  aes(
+    x = def_rush_success_rate,
+    y = def_pass_success_rate))+
+  
+  nflplotR::geom_nfl_logos(
+    aes(team_abbr = team),
+    width = 0.075)+
+  
+  geom_vline(
+    xintercept = def_rush_suc_avg,
+    linetype = "dashed",
+    color = "grey50")+
+  
+  geom_hline(
+    yintercept = def_pass_suc_avg,
+    linetype = "dashed",
+    color = "grey50")+
+
+  
+  labs(
+    title = "Team Defensive Success",
+    subtitle = "2026 Week 4 | Higher Success Rate is Better",
+    x = "Rushing Success %",
+    y = "Passing Success %")+
+  
+  theme_minimal()+
+  theme(
+    plot.background = element_rect(fill = "black", color = NA),
+    panel.background = element_rect(fill = "black", color = NA),
+    panel.grid = element_blank(),
+    
+    text = element_text(color = "white"),
+    axis.text = element_text(color = "white"),
+    axis.title = element_text(color = "white"),
+    
+    plot.title = element_text(
+      color = "white",
+      face = "bold"),
+    plot.subtitle = element_text(color = "grey80"))
+
+def_suc_wk_4
+```
+
+Saving chart
+```{r}
+ggsave(
+  filename = "C:/Personal Projects/Statistically Speaking/NFL_Week_4_Defensive Success Rate Chart.png",
+  plot = def_suc_wk_4,
+  width = 14,
+  height = 8,
+  dpi = 300,
+  bg = "black")
+```
+
+
+#Offensive Ranking
+```{r}
+offensive_ranking = offensive_heatmap_data%>%
+  group_by(stat)%>%
+  mutate(
+    rank = ifelse(
+      stat %in% offensive_lower_is_better,
+      min_rank(value),
+      min_rank(desc(value))))%>%
+  ungroup()%>%
+  select(team, stat, rank)%>%
+  pivot_wider(
+    names_from = stat,
+    values_from = rank,
+    names_glue = "{stat}_rank")%>%
+  mutate(
+    average_rank = rowMeans(
+      select(., ends_with("_rank")),
+      na.rm = TRUE),
+    final_rank = min_rank(average_rank))%>%
+  arrange(final_rank)
+```
+
+Offensive Ranking Table
+```{r}
+offensive_ranking_table = DT::datatable(
+  offensive_ranking,
+  options = list(
+    scrollX = TRUE,
+    pageLength = 10))
+
+offensive_ranking_table
+```
+
+Saving table
+```{r}
+saveWidget(
+  offensive_ranking_table,
+  "C:/Personal Projects/Statistically Speaking/offensive_ranking_table_wk4.html",
+  selfcontained = TRUE)
+```
+
+
+#Defensive Ranking
+```{r}
+defensive_ranking = defensive_heatmap_data%>%
+  group_by(stat)%>%
+  mutate(
+    rank = ifelse(
+      stat %in% defensive_lower_is_better,
+      min_rank(value),
+      min_rank(desc(value))))%>%
+  ungroup()%>%
+  select(team, stat, rank)%>%
+  pivot_wider(
+    names_from = stat,
+    values_from = rank,
+    names_glue = "{stat}_rank")%>%
+  mutate(
+    average_rank = rowMeans(
+      select(., ends_with("_rank")),
+      na.rm = TRUE),
+    final_rank = min_rank(average_rank))%>%
+  arrange(final_rank)
+```
+
+Defensive Ranking Table
+```{r}
+defensive_ranking_table = DT::datatable(
+  defensive_ranking,
+  options = list(
+    scrollX = TRUE,
+    pageLength = 10))
+
+defensive_ranking_table
+```
+
+Saving table
+```{r}
+saveWidget(
+  defensive_ranking_table,
+  "C:/Personal Projects/Statistically Speaking/defensive_ranking_table_wk4.html",
+  selfcontained = TRUE)
+```
+
+#Comparing Weekly Performance
+
+Create a function to make comparison between chargers stats week by week
+```{r}
+compare_weeks = function(
+    data,
+    team_name = "LAC",
+    earlier_week,
+    later_week) {
+  
+  data %>%
+    filter(
+      team == team_name,
+      week %in% c(earlier_week, later_week))%>%
+    select(
+      team,
+      week,
+      all_of(all_stats))%>%
+    pivot_longer(
+      cols = all_of(all_stats),
+      names_to = "Stat",
+      values_to = "value")%>%
+    pivot_wider(
+      names_from = week,
+      values_from = value,
+      names_prefix = "Week_")%>%
+    mutate(
+      Difference =
+        .data[[paste0("Week_", later_week)]] -
+        .data[[paste0("Week_", earlier_week)]],
+      
+      Direction = case_when(
+        Difference > 0 ~ "↑",
+        Difference < 0 ~ "↓",
+        TRUE ~ "→"))%>%
+    select(
+      Stat,
+      all_of(paste0("Week_", earlier_week)),
+      all_of(paste0("Week_", later_week)),
+      Difference,
+      Direction)
+}
+```
+
+Chargers Week 3 -> week 4 Comparison
+```{r}
+Chargers_wk3_wk4_table = compare_weeks(
+  all_weekly_stats,
+  team_name = "LAC",
+  earlier_week = 3,
+  later_week = 4)
+```
+
+Table Visualization of the Comparison
+```{r}
+Chargers_wk3_wk4_gt =
+  Chargers_wk3_wk4_table%>%
+  gt()%>%
+  tab_header(
+    title = "Chargers: Week 3 vs. Week 4",
+    subtitle = "Positive differences indicate improved performance")%>%
+  cols_label(
+    Stat = "Statistic",
+    Week_3 = "Week 3",
+    Week_4 = "Week 4",
+    Difference = "Difference",
+    Direction = "Direction")%>%
+  fmt_number(
+    columns = c(
+      Week_3,
+      Week_4,
+      Difference),
+    decimals = 2)%>%
+  cols_align(
+    align = "center",
+    columns = c(
+      Week_3,
+      Week_4,
+      Difference,
+      Direction))%>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_column_labels(everything()))%>%
+  tab_style(
+    style = cell_text(
+      size = px(20),
+      weight = "bold"),
+    locations = cells_body(
+      columns = Direction))%>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_body(
+      columns = Stat))%>%
+  opt_row_striping()%>%
+  opt_table_font(
+    font = list(
+      google_font("Roboto"),
+      default_fonts()))%>%
+  tab_options(
+    table.font.size = px(14),
+    heading.title.font.size = px(22),
+    heading.subtitle.font.size = px(14))
+
+Chargers_wk3_wk4_gt
+```
+
+
+Save the Comparison Table
+```{r}
+gtsave(
+  Chargers_wk3_wk4_gt,
+  "C:/Personal Projects/Statistically Speaking/Chargers_wk3_wk4.png")
+```
+
+
+Chargers vs League Seasonal Comparison
+
+```{r}
+current_week = max(league$week)
+
+league_through_current_week =
+  all_weekly_stats%>%
+  filter(week <= current_week)
+
+league_avg = all_weekly_stats%>%
+  group_by(week)%>%
+  summarise(
+    across(
+      all_of(all_stats),
+      ~ mean(.x, na.rm = TRUE)),
+    .groups = "drop")
+
+chargers_weekly = all_weekly_stats%>%
+  filter(team == "LAC")%>%
+  select(
+    week,
+    all_of(all_stats))
+```
+
+Chargers Season Avg:
+```{r}
+chargers_season_avg = all_weekly_stats%>%
+  filter(
+    team == "LAC",
+    week <= current_week)%>%
+  summarise(
+    across(
+      all_of(all_stats),
+      ~ mean(.x, na.rm = TRUE)))%>%
+  pivot_longer(
+    cols = everything(),
+    names_to = "stat",
+    values_to = "Chargers_Season_Avg")
+```
+
+League Season Avg:
+```{r}
+league_season_avg = all_weekly_stats%>%
+  filter(week <= current_week)%>%
+  summarise(
+    across(
+      all_of(all_stats),
+      ~ mean(.x, na.rm = TRUE)))%>%
+  pivot_longer(
+    cols = everything(),
+    names_to = "stat",
+    values_to = "League_Season_Avg")
+```
+
+Difference:
+```{r}
+league_vs_chargers_season = all_weekly_stats%>%
+  filter(week <= current_week)%>%
+  select(
+    team,
+    week,
+    all_of(all_stats))%>%
+  pivot_longer(
+    cols = all_of(all_stats),
+    names_to = "stat",
+    values_to = "value")%>%
+  group_by(stat, week)%>%
+  summarise(
+    league_avg = mean(
+      value,
+      na.rm = TRUE),
+    .groups = "drop")%>%
+  pivot_wider(
+    names_from = week,
+    values_from = league_avg,
+    names_glue = "League_Wk{week}")
+```
+
+Isolate Chargers
+```{r}
+chargers_comparison = all_weekly_stats%>%
+  filter(
+    team == "LAC",
+    week <= current_week)%>%
+  select(
+    week,
+    all_of(all_stats))%>%
+  pivot_longer(
+    cols = all_of(all_stats),
+    names_to = "stat",
+    values_to = "value")%>%
+  pivot_wider(
+    names_from = week,
+    values_from = value,
+    names_glue = "Chargers_Wk{week}")
+```
+
+
+Create the DF
+```{r}
+league_vs_chargers_season =
+  league_vs_chargers_season%>%
+  left_join(
+    chargers_comparison,
+    by = "stat")
+```
+
+
+
+
+
+
+
+
