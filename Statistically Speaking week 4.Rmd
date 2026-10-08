@@ -82,18 +82,23 @@ calculate_week_stats = function(week_number) {
         team = away_team,
         points = away_points))
   
+  scrimmage_week = league_week%>%
+  filter(
+    play_type %in% c("pass", "run"),
+    !is.na(posteam),
+    !is.na(defteam))
+  
+  special_teams = league_week%>%
+  filter(
+    play_type %in% c("field_goal", "kickoff", "extra_point", "punt"),
+    !is.na(posteam),
+    !is.na(defteam))
+  
   
   # -----------------------------
   # Offense
   # -----------------------------
-  
-  offense = league_week%>%
-    filter(
-      !is.na(posteam),
-      !play_type %in% c(
-        "kickoff",
-        "extra_point",
-        "field_goal"))%>%
+  offense = scrimmage_week%>%
     group_by(posteam)%>%
     summarise(
       
@@ -220,14 +225,7 @@ calculate_week_stats = function(week_number) {
   # -----------------------------
   # Defense
   # -----------------------------
-  
-  defense = league_week%>%
-    filter(
-      !is.na(defteam),
-      !play_type %in% c(
-        "kickoff",
-        "extra_point",
-        "field_goal"))%>%
+    defense = scrimmage_week%>%
     group_by(defteam)%>%
     summarise(
       
@@ -244,8 +242,7 @@ calculate_week_stats = function(week_number) {
         na.rm = TRUE),
       
       defensive_takeaways = sum(
-        interception + fumble_forced,
-        na.rm = TRUE),
+        interception + fumble_lost, na.rm = TRUE),
       
       EPA_given_up = sum(
         epa,
@@ -356,7 +353,35 @@ calculate_week_stats = function(week_number) {
       .groups = "drop")%>%
     rename(team = defteam)
   
+  # -----------------------------
+  # Special Teams
+  # -----------------------------
   
+st_kicking = special_teams%>%
+  group_by(posteam)%>%
+  summarise(
+    st_kicking_plays = n(),
+    st_kicking_EPA = sum(epa, na.rm = TRUE),
+    st_kicking_EPA_per_play = st_kicking_EPA / st_kicking_plays,
+    st_fgs_attempted = sum(field_goal_attempt, na.rm = TRUE),
+    st_fgs_made = sum(field_goal_result == "made", na.rm = TRUE),
+    st_fg_make_rate = if_else(st_fgs_attempted == 0, NA_real_,
+                              st_fgs_made / st_fgs_attempted),
+    st_takeaways = sum(fumble_lost, na.rm = TRUE),
+    .groups = "drop")%>%
+  rename(team = posteam)
+
+st_receiving = special_teams%>%
+  group_by(defteam)%>%
+  summarise(
+    st_receiving_plays = n(),
+    st_receiving_EPA_allowed = sum(epa, na.rm = TRUE),
+    st_receiving_EPA_allowed_per_play =
+      st_receiving_EPA_allowed / st_receiving_plays,
+    st_giveaways = sum(fumble_lost, na.rm = TRUE),
+    .groups = "drop")%>%
+  rename(team = defteam)
+
   # -----------------------------
   # Join offense + defense + points
   # -----------------------------
@@ -368,6 +393,12 @@ calculate_week_stats = function(week_number) {
     left_join(
       team_points,
       by = "team")%>%
+    left_join(
+      st_kicking,
+      by = "team")%>%
+    left_join(
+      st_receiving,
+      by = "team")%>%
     mutate(
       
       Net_EPA =
@@ -378,8 +409,8 @@ calculate_week_stats = function(week_number) {
         EPA_given_up_per_play,
       
       turnover_differential =
-        defensive_takeaways -
-        offensive_turnovers,
+        (defensive_takeaways + st_takeaways) -
+        (offensive_turnovers + st_giveaways),
       
       week = week_number)
   
@@ -534,7 +565,7 @@ all_weekly_stats = all_weekly_stats%>%
       min_rank(desc(incomplete_pass_forced_rate)),
     
     third_down_conversion_rate_allowed_rank =
-      min_rank(desc(third_down_conversion_rate_allowed)),
+      min_rank(third_down_conversion_rate_allowed),
     
     EPA_given_up_per_play_rank =
       min_rank(EPA_given_up_per_play),
@@ -1190,44 +1221,45 @@ saveWidget(
 
 Create a function to make comparison between chargers stats week by week
 ```{r}
+lower_is_better = c(offensive_lower_is_better, defensive_lower_is_better)
+
 compare_weeks = function(
     data,
     team_name = "LAC",
     earlier_week,
     later_week) {
   
-  data %>%
+  data%>%
     filter(
       team == team_name,
-      week %in% c(earlier_week, later_week))%>%
-    select(
-      team,
-      week,
-      all_of(all_stats))%>%
+      week %in% c(earlier_week, later_week)) %>%
+    select(team, week, all_of(all_stats)) %>%
     pivot_longer(
       cols = all_of(all_stats),
       names_to = "Stat",
-      values_to = "value")%>%
+      values_to = "value") %>%
     pivot_wider(
       names_from = week,
       values_from = value,
-      names_prefix = "Week_")%>%
+      names_prefix = "Week_") %>%
     mutate(
       Difference =
         .data[[paste0("Week_", later_week)]] -
         .data[[paste0("Week_", earlier_week)]],
       
+      # Positive = improvement, regardless of whether the stat is high-good or low-good
+      Improvement = if_else(Stat %in% lower_is_better, -Difference, Difference),
+      
       Direction = case_when(
-        Difference > 0 ~ "↑",
-        Difference < 0 ~ "↓",
-        TRUE ~ "→"))%>%
+        Improvement > 0 ~ "↑",
+        Improvement < 0 ~ "↓",
+        TRUE ~ "→")) %>%
     select(
       Stat,
       all_of(paste0("Week_", earlier_week)),
       all_of(paste0("Week_", later_week)),
       Difference,
-      Direction)
-}
+      Direction)}
 ```
 
 Chargers Week 3 -> week 4 Comparison
@@ -1398,7 +1430,6 @@ chargers_comparison = all_weekly_stats%>%
     names_glue = "Chargers_Wk{week}")
 ```
 
-
 Create the DF
 ```{r}
 league_vs_chargers_season =
@@ -1408,10 +1439,87 @@ league_vs_chargers_season =
     by = "stat")
 ```
 
+Creating Seasonal Difference
+```{r}
+lower_is_better = c(offensive_lower_is_better, defensive_lower_is_better)
+neutral_stats = c("offensive_plays", "defensive_plays",
+                  "off_average_air_yards_depth", "def_average_air_yards_depth")
+
+league_vs_chargers_season = league_vs_chargers_season%>%
+  mutate(
+    Wk1_difference = Chargers_Wk1 - League_Wk1,
+    Wk2_difference = Chargers_Wk2 - League_Wk2,
+    Wk3_difference = Chargers_Wk3 - League_Wk3,
+    Wk4_difference = Chargers_Wk4 - League_Wk4,
+    Chargers_Season_Avg = rowMeans(
+      select(., Chargers_Wk1, Chargers_Wk2, Chargers_Wk3, Chargers_Wk4), na.rm = TRUE),
+    League_Season_Avg = rowMeans(
+      select(., League_Wk1, League_Wk2, League_Wk3, League_Wk4), na.rm = TRUE),
+    Season_difference = Chargers_Season_Avg - League_Season_Avg,
+    
+    # Positive = Chargers better than the league, regardless of stat direction
+    Season_Improvement = if_else(stat %in% lower_is_better,
+                                 -Season_difference, Season_difference),
+    
+    Season_Direction = case_when(
+      stat %in% neutral_stats ~ "–",
+      Season_Improvement > 0 ~ "↑",
+      Season_Improvement < 0 ~ "↓",
+      TRUE ~ "→")) %>%
+  select(stat,
+         League_Wk1, Chargers_Wk1, Wk1_difference,
+         League_Wk2, Chargers_Wk2, Wk2_difference,
+         League_Wk3, Chargers_Wk3, Wk3_difference,
+         League_Wk4, Chargers_Wk4, Wk4_difference,
+         League_Season_Avg, Chargers_Season_Avg,
+         Season_difference, Season_Direction)
 
 
+league_vs_chargers_season4_gt = league_vs_chargers_season%>%
+  gt()%>%
+  tab_header(
+    title = "How the Chargers are Performing in comparison to the NFL",
+    subtitle = "Positive differences indicate improved performance")%>%
+  cols_label(
+    stat = "Statistic",
+    League_Season_Avg = "League",
+    Chargers_Season_Avg = "Chargers",
+    Season_difference = "Difference",
+    Season_Direction = "Direction")%>%
+  fmt_number(
+    columns = c(League_Season_Avg, Chargers_Season_Avg, Season_difference),
+    decimals = 2)%>%
+  cols_align(
+    align = "center",
+    columns = c(League_Season_Avg, Chargers_Season_Avg, Season_difference, Season_Direction))%>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_column_labels(everything()))%>%
+  tab_style(
+    style = cell_text(size = px(20), weight = "bold"),
+    locations = cells_body(columns = Season_Direction))%>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_body(columns = stat))%>%
+  opt_row_striping()%>%
+  opt_table_font(
+    font = list(
+      google_font("Roboto"),
+      default_fonts()))%>%
+  tab_options(
+    table.font.size = px(14),
+    heading.title.font.size = px(22),
+    heading.subtitle.font.size = px(14))
 
+league_vs_chargers_season4_gt 
+```
 
+Saving table
+```{r}
+gtsave(
+  league_vs_chargers_season4_gt,
+  "C:/Personal Projects/Statistically Speaking/league_vs_chargers_season4_gt.html")
+```
 
 
 
